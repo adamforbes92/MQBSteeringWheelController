@@ -1,6 +1,7 @@
 #include <ESP32_CAN.h>    // for CAN
 #include <Preferences.h>  // stores settings - mainly for last interval speed
 #include "LIN_master_HardwareSerial_ESP32.h"
+#include <DigiPotX9Cxxx.h>
 
 // defines
 // debug / diag / testing
@@ -22,14 +23,20 @@
 
 #define linLightID 0x0D                                          // for sending over light data - this is required whatever we're doing otherwise the controller doesn't feedback(!)
 #define linButtonID 0x0E                                         // for retrieving button presses - they are returned over this ID
-#define steeringWheel_ID 0x1E0                                   // broadcast to CAN ID
+#define linTemperatureID 0x3A                                    // for heated steering wheels
+#define linAccButtonsID 0x0F                                     // for LIN Accessory buttons
+#define canButtonID 0x1E0                                        // broadcast to CAN ID
 #define linBaud 19200                                            // LIN 2.x > 19.2kBaud
 #define linPause 100                                             // Send packets every x ms ** CAN CHANGE THIS **
 
-#define pinCAN_RX 14                                             // RX pin for SN65HVD230 (CAN_RX)
-#define pinCAN_TX 13                                             // TX pin for SN65HVD230 (CAN_TX)
+#define pinCAN_RX 13                                             // RX pin for SN65HVD230 (CAN_RX)
+#define pinCAN_TX 14                                             // TX pin for SN65HVD230 (CAN_TX)
 
-#define pinAuxLight 35                                           // for aux PWM input - like MK4 chassis etc.
+#define pinAuxLight 39                                           // for aux PWM input - like MK4 chassis etc.
+
+#define resistorUD 25                                            // up/down resistance pin for X9C103SZ
+#define resistorInc 26                                           // incrememnt pin for X9C103SZ
+#define resistorCS 27                                            // chip select pin for X9C103SZ
 
 // CAN IDs
 #define MOTOR1_ID 0x280
@@ -66,25 +73,26 @@ extern byte upperLightsLIN = 0x7F;
 bool buttonFound = false;
 
 struct {
-  uint8_t fromID;  // button 'id' FROM steering wheel
-  uint8_t toID;    // convert TO 'id' for gateway
-  uint8_t canID;   // convert TO 'id' for CAN
+  uint8_t fromID;       // button 'id' FROM steering wheel
+  uint8_t toID;         // convert TO 'id' for gateway
+  uint8_t canID;        // convert TO 'id' for CAN
+  uint16_t radioOhm;    // resistance for radio in ohms (5v output(!))
   String comment;  // generic English comment - mostly for Serial.  Yes, it hogs memory but it's an ESP sooo...
 } buttonTranspose[] = {
   // from > to
-  { 0x00, 0x00, 0x00, "NULL" },
-  { 0x03, 0x16, 0x01, "Previous" },   // prev
-  { 0x02, 0x15, 0x02, "Next" },       // next
-  { 0x1A, 0x19, 0x03, "Voice/Mic" },  // phone <- voice/mic
-  { 0x1A, 0x1C, 0x04, "Phone" },      // phone
-  { 0x29, 0x23, 0x05, "Return" },     // return <- view (on wheels with "view" button)
-  { 0x22, 0x04, 0x06, "Up" },         // up
-  { 0x23, 0x05, 0x07, "Down" },       // down
-  { 0x09, 0x03, 0x08, "Source-" },    // src-
-  { 0x0A, 0x02, 0x09, "Source+" },    // src+
-  { 0x28, 0x07, 0x10, "OK" },         // ok
-  { 0x06, 0x10, 0xA, "Volume+" },     // vol+
-  { 0x07, 0x11, 0x00, "Volume-" },    // vol-
-  { 0x2B, 0x0C, 0x00, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
-  { 0x42, 0x0C, 0x00, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
+  { 0x00, 0x00, 0x00, 0, "NULL" },
+  { 0x03, 0x16, 0x01, 0, "Previous" },   // prev
+  { 0x02, 0x15, 0x02, 0, "Next" },       // next
+  { 0x1A, 0x19, 0x03, 0, "Voice/Mic" },  // phone <- voice/mic
+  { 0x1A, 0x1C, 0x04, 0, "Phone" },      // phone
+  { 0x29, 0x23, 0x05, 0, "Return" },     // return <- view (on wheels with "view" button)
+  { 0x22, 0x04, 0x06, 0, "Up" },         // up
+  { 0x23, 0x05, 0x07, 0, "Down" },       // down
+  { 0x09, 0x03, 0x08, 0, "Source-" },    // src-
+  { 0x0A, 0x02, 0x09, 0, "Source+" },    // src+
+  { 0x28, 0x07, 0x10, 0, "OK" },         // ok
+  { 0x06, 0x10, 0xA, 0, "Volume+" },     // vol+
+  { 0x07, 0x11, 0x00, 0, "Volume-" },    // vol-
+  { 0x2B, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
+  { 0x42, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
 };

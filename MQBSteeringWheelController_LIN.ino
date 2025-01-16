@@ -1,4 +1,5 @@
 void getLightLINFrame() {
+  // get LIN light frame (from another gateway, only used in >MK4)
   memset(gatewayLightData, '\0', arraySize(gatewayLightData));  // clear old buttons
 
   chassisLIN.resetStateMachine();
@@ -7,7 +8,8 @@ void getLightLINFrame() {
 }
 
 void getButtonState() {
-  memset(recvButtonData, '\0', arraySize(recvButtonData));  // clear old buttons
+  // get LIN buttons from steering wheel
+  memset(recvButtonData, '\0', arraySize(recvButtonData));          // clear old buttons
   memset(transButtonDataLIN, '\0', arraySize(transButtonDataLIN));  // clear old buttons
   memset(transButtonDataCAN, '\0', arraySize(transButtonDataCAN));  // clear old buttons
 
@@ -17,6 +19,7 @@ void getButtonState() {
 }
 
 void sendLightLINFrame() {
+  // send light data - could be zero (off) but means we still get button frames
   steeringWheelLIN.resetStateMachine();
   steeringWheelLIN.resetError();
   steeringWheelLIN.sendMasterRequestBlocking(LIN_Master_Base::LIN_V2, linLightID, 4, steeringWheelLightData);

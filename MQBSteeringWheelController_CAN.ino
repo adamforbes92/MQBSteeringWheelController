@@ -26,7 +26,7 @@ void onBodyRX(const CAN_message_t& frame) {
 
 void broadcastButtonsCAN() {
   CAN_message_t broadcastCAN;
-  broadcastCAN.id = steeringWheel_ID;
+  broadcastCAN.id = canButtonID;
   broadcastCAN.len = 8;
 
   if (transButtonDataCAN[1] != 0) {  // button pressed; parse it...

@@ -8,12 +8,37 @@ void basicInit() {
   Serial.println(F("Preferences Initialising..."));
 #endif
   preferences.begin("settings", false);
-
-  setupPins();  // setup pins for IO
-  steeringWheelLIN.begin(linBaud);
+#if stateDebug
+  Serial.println(F("Preferences Initialised!"));
+#endif
 
 #if stateDebug
-  Serial.println(F("VW Steering Wheel LIN Controller Initialised, LIN started!"));
+  Serial.println(F("IO Pins Initialising..."));
+#endif
+  setupPins();  // setup pins for IO
+#if stateDebug
+  Serial.println(F("IO Pins Initialised!"));
+#endif
+
+#if stateDebug
+  Serial.println(F("LIN Initialising..."));
+#endif
+  steeringWheelLIN.begin(linBaud);
+  chassisLIN.begin(linBaud);
+#if stateDebug
+  Serial.println(F("LIN Initialised!"));
+#endif
+
+#if stateDebug
+  Serial.println(F("CAN Initialising..."));
+#endif
+canInit();
+#if stateDebug
+  Serial.println(F("CAN Initialised!"));
+#endif
+
+#if stateDebug
+  Serial.println(F("VW Steering Wheel LIN Controller Initialised!"));
 #endif
 }
 

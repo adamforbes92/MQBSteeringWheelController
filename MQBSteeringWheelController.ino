@@ -4,7 +4,7 @@ This example is based on the 6R GTi Wheel but all models will be similar.
 
 Code has a structure to get wheel button 'numbers' and translate them into new numbers.  Use function 'buttonTranspose' in _defs to change the outputs from the buttons
 
-There's another LIN chip for 'changing' into different bits.  Possible solution for other marques - although this is based for use on the MK4 platform.  Mostly untested(!)
+The PCB has 2x LIN chips for 'changing' into different bits.  Possible solution for other marques - although this is based for use on the MK4 platform.  Mostly untested(!)  Would need examples of other steering wheels!
 
 You HAVE to send a light frame to 'wake' the board up and receive data back - hence the constant light data...  The 'grey' wire needs 12v to keep the board awake - tie these two together at the steering wheel side to save
 on pins coming back through the squib
@@ -14,18 +14,21 @@ Forbes-Automotive.com; 2024
 
 #include "MQBSteeringWheelController_defs.h"
 
-// Setup LIN libraries for Serial1 & 2, define pins.  SteeringWheelLIN goes to the SW, chassis goes to the gateway (for >MK4)
+// setup LIN libraries for Serial1 & 2, define pins.  SteeringWheelLIN goes to the SW, chassis goes to the gateway (for >MK4)
 LIN_Master_HardwareSerial_ESP32 steeringWheelLIN(Serial1, pinRX_LINSteeringWheel, pinTX_LINSteeringWheel, "LIN_SteeringWheel");  // parameters: interface, Rx, Tx, name
 LIN_Master_HardwareSerial_ESP32 chassisLIN(Serial2, pinRX_LINchassis, pinTX_LINchassis, "LIN_chassis");                          // parameters: interface, Rx, Tx, name
 
 // for sending data over CAN, if req.
 ESP32_CAN<RX_SIZE_256, TX_SIZE_16> chassisCAN;
 
-// EEPROM
+// digipot for radio control
+DigiPot radioResistor(resistorInc, resistorUD, resistorCS); 
+
+// EEPROM - for remembering settings
 Preferences preferences;
 
 void auxLightPWM() {    // Interrupt 0 service routine
-  lastRead = micros();  // Get current time
+  lastRead = micros();  // Get current time in micros
   if (rise_Time == 0) {
     rise_Time = lastRead;
   }
@@ -44,7 +47,7 @@ void auxLightPWM() {    // Interrupt 0 service routine
 }
 
 void setup() {
-  basicInit();  // basic init in _io.  Keeps this page clean because of all of the 'serial_debugs'
+  basicInit();  // basic init in '_io'.  Keeps this page clean because of all of the 'serial_debugs'
 }
 
 void loop() {
@@ -52,7 +55,7 @@ void loop() {
   chassisLIN.handler();        // tick over the LIN handler
 
   if (hasAuxLight) {                   // check to see if 'aux light' is enabled - this will capture using the input/interrupt the freq. of the PWM signal from the ~MK4 based rheostat
-    if (dutyCycle > upperLightsAux) {  // overwrite the new highest duty cycle so that the upper bounds of the rheostat is maintained
+    if (dutyCycle > upperLightsAux) {  // overwrite the new highest duty cycle so that the upper bounds of the rheostat is maintained.  *** REVIEW ***
       upperLightsAux = dutyCycle;
     }
 
@@ -60,11 +63,14 @@ void loop() {
     Serial.print("Outgoing Duty = 0x");  // print the outgoing duty as a frame to the steering wheel
     Serial.println(map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN), HEX);
 #endif
-
-    steeringWheelLightData[0] = map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN);  // convert the rheostat PWM into a useable (0-0x7F) output.  Assumed linear
-  } else {                                                                             // if !MK4, capture the light signal from LIN2 chip (>Mk4 platform)
-    getLightLINFrame();                                                                // if has a gateway installed, check for LIN data for lights
-    if (gatewayLightData[0] != 0x00) {                                                 // if found LIN data for lights, let's pass it on...
+    if (dutyCycle == 0) {
+      steeringWheelLightData[0] = 0x00;  // force light data regardless so that the steering wheel feeds back...
+    } else {
+      steeringWheelLightData[0] = map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN);  // convert the rheostat PWM into a useable (0-0x7F) output.  Assumed linear(!) *** REVIEW ***
+    }
+  } else {                              // if !MK4, capture the light signal from LIN2 chip (>Mk4 platform)
+    getLightLINFrame();                 // if has a gateway installed, check for LIN data for lights
+    if (gatewayLightData[0] != 0x00) {  // if found LIN data for lights, let's pass it on...
       steeringWheelLightData[0] = gatewayLightData[0];
     }
   }
