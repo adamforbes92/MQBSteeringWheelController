@@ -5,38 +5,45 @@
 
 // defines
 // debug / diag / testing
-#define stateDebug 1                                             // State Debug - set to 0 on release ** CAN CHANGE THIS **
-#define ChassisCANDebug 0                                        // if 1, will print CAN 1 (Chassis) messages ** CAN CHANGE THIS **
-#define hasResistiveStereo 1                                     // for outputting resistive values for Sony/etc stereos ** CAN CHANGE THIS **
-#define hasAuxLight 1                                            // to disable getting aux input - just saves some CPU if it's not being used ** CAN CHANGE THIS **
-#define hasCAN 1                                                 // to broadcast over CAN ** CAN CHANGE THIS **
+#define ChassisCANDebug 0     // if 1, will print CAN 1 (Chassis) messages ** CAN CHANGE THIS **
+#define hasResistiveStereo 0  // for outputting resistive values for Sony/etc stereos ** CAN CHANGE THIS **
+#define hasAuxLight 1         // to disable getting aux input - just saves some CPU if it's not being used ** CAN CHANGE THIS **
+#define hasCAN 0              // to broadcast over CAN ** CAN CHANGE THIS **
 
 #define arraySize(array) (sizeof((array)) / sizeof((array)[0]))  // calc. for size of arrays
 
+#ifdef ENABLE_DEBUG
+#define DEBUG(x, ...) Serial.printf(x "\n", ##__VA_ARGS__)
+#define DEBUG_(x, ...) Serial.printf(x, ##__VA_ARGS__)
+#else
+#define DEBUG(x, ...)
+#define DEBUG_(x, ...)
+#endif
+
 // define pins
-#define pinTX_LINSteeringWheel 16                                // transmit pin for LIN TJA1020
-#define pinRX_LINSteeringWheel 17                                // receive pin for LIN TJA1020
-#define pinTX_LINchassis 22                                      // transmit pin for LIN TJA1020
-#define pinRX_LINchassis 23                                      // receive pin for LIN TJA1020
-#define pinWake_LIN 18                                           // wake for BOTH LIN TJA1020
-#define pinCS_LIN 19                                             // chip select for BOTH LIN TJA1020
+#define pinTX_LINSteeringWheel 16  // transmit pin for LIN TJA1020
+#define pinRX_LINSteeringWheel 17  // receive pin for LIN TJA1020
+#define pinTX_LINchassis 22        // transmit pin for LIN TJA1020
+#define pinRX_LINchassis 23        // receive pin for LIN TJA1020
+#define pinWake_LIN 18             // wake for BOTH LIN TJA1020
+#define pinCS_LIN 19               // chip select for BOTH LIN TJA1020
 
-#define linLightID 0x0D                                          // for sending over light data - this is required whatever we're doing otherwise the controller doesn't feedback(!)
-#define linButtonID 0x0E                                         // for retrieving button presses - they are returned over this ID
-#define linTemperatureID 0x3A                                    // for heated steering wheels
-#define linAccButtonsID 0x0F                                     // for LIN Accessory buttons
-#define canButtonID 0x1E0                                        // broadcast to CAN ID
-#define linBaud 19200                                            // LIN 2.x > 19.2kBaud
-#define linPause 100                                             // Send packets every x ms ** CAN CHANGE THIS **
+#define linLightID 0x0D        // for sending over light data - this is required whatever we're doing otherwise the controller doesn't feedback(!)
+#define linButtonID 0x0E       // for retrieving button presses - they are returned over this ID
+#define linTemperatureID 0x3A  // for heated steering wheels
+#define linAccButtonsID 0x0F   // for LIN Accessory buttons
+#define canButtonID 0x1E0      // broadcast to CAN ID
+#define linBaud 19200          // LIN 2.x > 19.2kBaud
+#define linPause 100           // Send packets every x ms ** CAN CHANGE THIS **
 
-#define pinCAN_RX 13                                             // RX pin for SN65HVD230 (CAN_RX)
-#define pinCAN_TX 14                                             // TX pin for SN65HVD230 (CAN_TX)
+#define pinCAN_RX 13  // RX pin for SN65HVD230 (CAN_RX)
+#define pinCAN_TX 14  // TX pin for SN65HVD230 (CAN_TX)
 
-#define pinAuxLight 39                                           // for aux PWM input - like MK4 chassis etc.
+#define pinAuxLight 39  // for aux PWM input - like MK4 chassis etc.
 
-#define resistorUD 25                                            // up/down resistance pin for X9C103SZ
-#define resistorInc 26                                           // incrememnt pin for X9C103SZ
-#define resistorCS 27                                            // chip select pin for X9C103SZ
+#define resistorUD 25   // up/down resistance pin for X9C103SZ
+#define resistorInc 26  // incrememnt pin for X9C103SZ
+#define resistorCS 27   // chip select pin for X9C103SZ
 
 // CAN IDs
 #define MOTOR1_ID 0x280
@@ -53,10 +60,13 @@
 #define BRAKES5_ID 0x5A0
 #define HALDEX_ID 0x2C0
 
-uint32_t lastMillis = 0;                                                     // Counter for sending frames x ms
-uint8_t gatewayLightData[4] = { 0x00, 0x00, 0x00, 0x00 };                    // mqb may require 4 bytes (the last two being 0xFF).  First byte is brightness
-uint8_t steeringWheelLightData[4] = { 0x00, 0xF9, 0xFF, 0xFF };                           // mqb may require 4 bytes (the last two being 0xFF).  First byte is brightness
-uint8_t recvButtonData[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };  // button data return, set to 0x00 for first run
+#define steering_ID 0x5C1  // steering wheel buttons
+#define light_ID 0x470     // light illu - 0% = 0x00, 0x64 = 100%
+
+uint32_t lastMillis = 0;                                                             // Counter for sending frames x ms
+uint8_t gatewayLightData[4] = { 0x00, 0x00, 0x00, 0x00 };                            // mqb may require 4 bytes (the last two being 0xFF).  First byte is brightness
+uint8_t steeringWheelLightData[4] = { 0x00, 0xF9, 0xFF, 0xFF };                      // mqb may require 4 bytes (the last two being 0xFF).  First byte is brightness
+uint8_t recvButtonData[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };      // button data return, set to 0x00 for first run
 uint8_t transButtonDataLIN[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };  // button data return, set to 0x00 for first run
 uint8_t transButtonDataCAN[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };  // button data return, set to 0x00 for first run
 
@@ -73,13 +83,13 @@ extern byte upperLightsLIN = 0x7F;
 bool buttonFound = false;
 
 struct {
-  uint8_t fromID;       // button 'id' FROM steering wheel
-  uint8_t toID;         // convert TO 'id' for gateway
-  uint8_t canID;        // convert TO 'id' for CAN
-  uint16_t radioOhm;    // resistance for radio in ohms (5v output(!))
-  String comment;  // generic English comment - mostly for Serial.  Yes, it hogs memory but it's an ESP sooo...
+  uint8_t fromID;     // button 'id' FROM steering wheel
+  uint8_t toID;       // convert TO 'id' for gateway
+  uint8_t canID;      // convert TO 'id' for CAN
+  uint16_t radioOhm;  // resistance for radio in ohms (5v output(!))
+  String comment;     // generic English comment - mostly for Serial.  Yes, it hogs memory but it's an ESP sooo...
 } buttonTranspose[] = {
-  // from > to
+  // from LIN > to LIN > to CAN > to resistance
   { 0x00, 0x00, 0x00, 0, "NULL" },
   { 0x03, 0x16, 0x01, 0, "Previous" },   // prev
   { 0x02, 0x15, 0x02, 0, "Next" },       // next
@@ -96,3 +106,51 @@ struct {
   { 0x2B, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
   { 0x42, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
 };
+
+/* r8 buttons:
+Exhaust: 
+[1] = 111
+[2] = 0
+[3] = 1 (high?)
+[4] = 49
+[5] = 0 
+[6] = 0
+[7] = 60
+
+Drive Select: 
+[1] = 112
+[2] = 0
+[3] = 1 (high?)
+[4] = 49
+[5] = 0 
+[6] = 0
+[7] = 60
+
+Race: 
+[1] = 113
+[2] = 0
+[3] = 1 (high?)
+[4] = 49
+[5] = 0 
+[6] = 0
+[7] = 60
+
+Race Right: 
+[1] = 114
+[2] = 0
+[3] = 1 (high?)
+[4] = 49
+[5] = 0 
+[6] = 0
+[7] = 60
+
+Race Left: 
+[1] = 114
+[2] = 0
+[3] = 15
+[4] = 49
+[5] = 0 
+[6] = 0
+[7] = 60
+
+*/

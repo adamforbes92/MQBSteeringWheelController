@@ -22,10 +22,11 @@ LIN_Master_HardwareSerial_ESP32 chassisLIN(Serial2, pinRX_LINchassis, pinTX_LINc
 ESP32_CAN<RX_SIZE_256, TX_SIZE_16> chassisCAN;
 
 // digipot for radio control
-DigiPot radioResistor(resistorInc, resistorUD, resistorCS); 
+DigiPot radioResistor(resistorInc, resistorUD, resistorCS);
 
 // EEPROM - for remembering settings
 Preferences preferences;
+#define ENABLE_DEBUG  // State Debug - set to 0 on release ** CAN CHANGE THIS **
 
 void auxLightPWM() {    // Interrupt 0 service routine
   lastRead = micros();  // Get current time in micros
@@ -59,12 +60,11 @@ void loop() {
       upperLightsAux = dutyCycle;
     }
 
-#if stateDebug
-    Serial.print("Outgoing Duty = 0x");  // print the outgoing duty as a frame to the steering wheel
-    Serial.println(map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN), HEX);
-#endif
+    //Serial.print("Outgoing Duty = 0x");  // print the outgoing duty as a frame to the steering wheel
+    DEBUG(map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN), HEX);
+
     if (dutyCycle == 0) {
-      steeringWheelLightData[0] = 0x00;  // force light data regardless so that the steering wheel feeds back...
+      steeringWheelLightData[0] = 0x00;  // force light data regardless so that the steering wheel feeds back... 0x64 is f
     } else {
       steeringWheelLightData[0] = map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN);  // convert the rheostat PWM into a useable (0-0x7F) output.  Assumed linear(!) *** REVIEW ***
     }

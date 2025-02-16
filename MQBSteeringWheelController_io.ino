@@ -1,45 +1,27 @@
 void basicInit() {
-#if stateDebug
+#ifdef ENABLE_DEBUG
   Serial.begin(115200);
-  Serial.println(F("VW Steering Wheel LIN Controller Initialising..."));
 #endif
+  DEBUG("VW Steering Wheel LIN Controller Initialising...");
 
-#if stateDebug
-  Serial.println(F("Preferences Initialising..."));
-#endif
+  DEBUG("Preferences Initialising...");
   preferences.begin("settings", false);
-#if stateDebug
-  Serial.println(F("Preferences Initialised!"));
-#endif
+  DEBUG("Preferences Initialised!");
 
-#if stateDebug
-  Serial.println(F("IO Pins Initialising..."));
-#endif
+  DEBUG("IO Pins Initialising...");
   setupPins();  // setup pins for IO
-#if stateDebug
-  Serial.println(F("IO Pins Initialised!"));
-#endif
+  DEBUG("IO Pins Initialised!");
 
-#if stateDebug
-  Serial.println(F("LIN Initialising..."));
-#endif
+  DEBUG("LIN Initialising...");
   steeringWheelLIN.begin(linBaud);
   chassisLIN.begin(linBaud);
-#if stateDebug
-  Serial.println(F("LIN Initialised!"));
-#endif
+  DEBUG("LIN Initialised!");
 
-#if stateDebug
-  Serial.println(F("CAN Initialising..."));
-#endif
-canInit();
-#if stateDebug
-  Serial.println(F("CAN Initialised!"));
-#endif
+  DEBUG("CAN Initialising...");
+  canInit();
+  DEBUG("CAN Initialised!");
 
-#if stateDebug
-  Serial.println(F("VW Steering Wheel LIN Controller Initialised!"));
-#endif
+  DEBUG("VW Steering Wheel LIN Controller Initialised!");
 }
 
 void setupPins() {

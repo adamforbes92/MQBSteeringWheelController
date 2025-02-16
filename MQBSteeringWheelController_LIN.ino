@@ -23,25 +23,23 @@ void sendLightLINFrame() {
   steeringWheelLIN.resetStateMachine();
   steeringWheelLIN.resetError();
   steeringWheelLIN.sendMasterRequestBlocking(LIN_Master_Base::LIN_V2, linLightID, 4, steeringWheelLightData);
+
+  chassisLIN.resetStateMachine();
+  chassisLIN.resetError();
+  chassisLIN.sendMasterRequestBlocking(LIN_Master_Base::LIN_V2, linLightID, 4, steeringWheelLightData);
 }
 
 void sendButtonLINFrame() {
   buttonFound = false;
 
-  if (recvButtonData[1] != 0) {  // button pressed; parse it...
-
-#if stateDebug
+  if (recvButtonData[1] != 0) {                            // button pressed; parse it...
     for (int j = 0; j < arraySize(recvButtonData); j++) {  // print ALL data from the received buttons - byte 0 through 7
-      Serial.println(recvButtonData[j]);
+      DEBUG(recvButtonData[j]);
     }
-#endif
 
     for (int i = 1; i < arraySize(buttonTranspose); i++) {
       if (recvButtonData[1] == buttonTranspose[i].fromID) {  // start at 1, 0 is ignored...
-
-#if stateDebug
-        Serial.println(buttonTranspose[i].comment);
-#endif
+        DEBUG(buttonTranspose[i].comment);
 
         transButtonDataLIN[1] = buttonTranspose[i].toID;   // found buttons, transfer the 'toID' into the LIN frame
         transButtonDataCAN[1] = buttonTranspose[i].canID;  // found buttons, transfer the 'toCAN' into the CAN frame
@@ -56,6 +54,6 @@ void sendButtonLINFrame() {
   }
 
   if (!buttonFound && recvButtonData[1] != 0) {
-    Serial.println("Button not found, program it?");
+    DEBUG("Button not found, program it?");
   }
 }
