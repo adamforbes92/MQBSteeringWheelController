@@ -79,6 +79,7 @@ extern unsigned long on_Time = 0;
 
 extern unsigned long upperLightsAux = 100;
 extern byte upperLightsLIN = 0x7F;
+extern uint16_t radioResistance = 0;
 
 bool buttonFound = false;
 

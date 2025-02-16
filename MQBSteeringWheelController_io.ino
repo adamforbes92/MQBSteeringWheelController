@@ -34,4 +34,6 @@ void setupPins() {
   // drive CS & Wake high to use the LIN chip
   digitalWrite(pinCS_LIN, HIGH);
   digitalWrite(pinWake_LIN, HIGH);
+
+  radioResistor.setup(resistorInc, resistorUD, resistorCS);
 }

@@ -43,6 +43,7 @@ void sendButtonLINFrame() {
 
         transButtonDataLIN[1] = buttonTranspose[i].toID;   // found buttons, transfer the 'toID' into the LIN frame
         transButtonDataCAN[1] = buttonTranspose[i].canID;  // found buttons, transfer the 'toCAN' into the CAN frame
+        radioResistance = buttonTranspose[i].radioOhm;
 
         chassisLIN.resetStateMachine();
         chassisLIN.resetError();

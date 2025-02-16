@@ -87,4 +87,11 @@ void loop() {
   if (hasCAN) {
     broadcastButtonsCAN();
   }
+  if (hasResistiveStereo && radioResistance != 0) {
+    radioResistor.set(radioResistance);
+    radioResistance = 0;
+    delay(100);
+    radioResistor.set(0);
+    delay(100);
+  }
 }
