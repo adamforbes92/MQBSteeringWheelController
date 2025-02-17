@@ -43,6 +43,13 @@ void sendButtonLINFrame() {
 
         transButtonDataLIN[1] = buttonTranspose[i].toID;   // found buttons, transfer the 'toID' into the LIN frame
         transButtonDataCAN[1] = buttonTranspose[i].canID;  // found buttons, transfer the 'toCAN' into the CAN frame
+
+        if (buttonTranspose[i].fromID == 0x1E) {  // special case for paddles!
+          dsgPaddleUp = true;
+        }
+        if (buttonTranspose[i].fromID == 0x1F) {  // special case for paddles!
+          dsgPaddleDown = true;
+        }
         radioResistance = buttonTranspose[i].radioOhm;
 
         chassisLIN.resetStateMachine();

@@ -60,11 +60,10 @@ void loop() {
       upperLightsAux = dutyCycle;
     }
 
-    //Serial.print("Outgoing Duty = 0x");  // print the outgoing duty as a frame to the steering wheel
     DEBUG(map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN), HEX);
 
     if (dutyCycle == 0) {
-      steeringWheelLightData[0] = 0x00;  // force light data regardless so that the steering wheel feeds back... 0x64 is f
+      steeringWheelLightData[0] = 0x00;  // force light data regardless so that the steering wheel feeds back... 0x64 is full brightness
     } else {
       steeringWheelLightData[0] = map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN);  // convert the rheostat PWM into a useable (0-0x7F) output.  Assumed linear(!) *** REVIEW ***
     }
@@ -87,6 +86,14 @@ void loop() {
   if (hasCAN) {
     broadcastButtonsCAN();
   }
+
+  if (hasCAN && dsgPaddleUp) {
+    sendPaddleUpFrame();
+  }
+  if (hasCAN && dsgPaddleDown) {
+    sendPaddleFrame();
+  }
+
   if (hasResistiveStereo && radioResistance != 0) {
     radioResistor.set(radioResistance);
     radioResistance = 0;

@@ -37,3 +37,47 @@ void broadcastButtonsCAN() {
     Serial.println(F("Chassis CAN Write TX Fail!"));  // if writing is unsuccessful, there is something wrong with the Haldex(!) Possibly flash red LED?
   }
 }
+
+void sendPaddleUpFrame() {
+  CAN_message_t paddlesUp;  //0x7C0
+  paddlesUp.id = GRA_ID;
+  paddlesUp.len = 8;
+  paddlesUp.buf[0] = 0xB7;  //
+  paddlesUp.buf[2] = 0x34;
+  paddlesUp.buf[3] = 0x02;
+  bitSet(paddlesUp.buf[3], 1);         // set high (trigger)
+  if (!chassisCAN.write(paddlesUp)) {  // write CAN frame from the body to the Haldex
+  }
+
+  paddlesUp.id = GRA_ID;
+  paddlesUp.len = 8;
+  paddlesUp.buf[0] = 0xB7;  //
+  paddlesUp.buf[2] = 0x34;
+  paddlesUp.buf[3] = 0x02;
+  bitSet(paddlesUp.buf[3], 0);         // set low (off)
+  if (!chassisCAN.write(paddlesUp)) {  // write CAN frame from the body to the Haldex
+  }
+  dsgPaddleUp = false;
+}
+
+void sendPaddleDownFrame() {
+  CAN_message_t paddlesDown;  //0x7C0
+  paddlesDown.id = GRA_ID;
+  paddlesDown.len = 8;
+  paddlesDown.buf[0] = 0xB4;  //
+  paddlesDown.buf[2] = 0x34;
+  paddlesDown.buf[3] = 0x01;
+  bitSet(paddlesDown.buf[3], 1);         // set high (trigger)
+  if (!chassisCAN.write(paddlesDown)) {  // write CAN frame from the body to the Haldex
+  }
+
+  paddlesDown.id = GRA_ID;
+  paddlesDown.len = 8;
+  paddlesDown.buf[0] = 0xB4;  //
+  paddlesDown.buf[2] = 0x34;
+  paddlesDown.buf[3] = 0x01;
+  bitSet(paddlesDown.buf[3], 0);         // set low (off)
+  if (!chassisCAN.write(paddlesDown)) {  // write CAN frame from the body to the Haldex
+  }
+  dsgPaddleDown = false;
+}

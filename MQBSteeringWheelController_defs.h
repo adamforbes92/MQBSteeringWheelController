@@ -81,6 +81,9 @@ extern unsigned long upperLightsAux = 100;
 extern byte upperLightsLIN = 0x7F;
 extern uint16_t radioResistance = 0;
 
+extern bool dsgPaddleUp = false;
+extern bool dsgPaddleDown = false;
+
 bool buttonFound = false;
 
 struct {
@@ -106,6 +109,8 @@ struct {
   { 0x07, 0x11, 0x00, 0, "Volume-" },    // vol-
   { 0x2B, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
   { 0x42, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
+  { 0x1E, 0x00, 0x00, 0, "Paddle Shifter Up" },  // dsg paddle up
+  { 0x1F, 0x00, 0x00, 0, "Paddle Shifter Down" },  // dsg paddle down
 };
 
 /* r8 buttons:
