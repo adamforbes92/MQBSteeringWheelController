@@ -91,7 +91,7 @@ void loop() {
     sendPaddleUpFrame();
   }
   if (hasCAN && dsgPaddleDown) {
-    sendPaddleFrame();
+    sendPaddleDownFrame();
   }
 
   if (hasResistiveStereo && radioResistance != 0) {

@@ -6,9 +6,9 @@
 // defines
 // debug / diag / testing
 #define ChassisCANDebug 0     // if 1, will print CAN 1 (Chassis) messages ** CAN CHANGE THIS **
-#define hasResistiveStereo 0  // for outputting resistive values for Sony/etc stereos ** CAN CHANGE THIS **
+#define hasResistiveStereo 1  // for outputting resistive values for Sony/etc stereos ** CAN CHANGE THIS **
 #define hasAuxLight 1         // to disable getting aux input - just saves some CPU if it's not being used ** CAN CHANGE THIS **
-#define hasCAN 0              // to broadcast over CAN ** CAN CHANGE THIS **
+#define hasCAN 1              // to broadcast over CAN ** CAN CHANGE THIS **
 
 #define arraySize(array) (sizeof((array)) / sizeof((array)[0]))  // calc. for size of arrays
 
