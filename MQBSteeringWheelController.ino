@@ -80,11 +80,11 @@ void loop() {
 
   // now that light data has been processed check for button states
   getButtonState();
+  sendButtonLINFrame();
 
   if ((millis() - lastMillis2) > btnDebounce) {  // check to see if x ms (linPause) has elapsed - slow down the frames!
     lastMillis2 = millis();
 
-    sendButtonLINFrame();
     if (hasCAN) {
       broadcastButtonsCAN();
     }

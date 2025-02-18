@@ -35,7 +35,7 @@
 #define canButtonID 0x1E0      // broadcast to CAN ID
 #define linBaud 19200          // LIN 2.x > 19.2kBaud
 #define linPause 100           // Send packets every x ms ** CAN CHANGE THIS **
-#define btnDebounce 200           // Send packets every x ms ** CAN CHANGE THIS **
+#define btnDebounce 80           // Send packets every x ms ** CAN CHANGE THIS **
 
 #define pinCAN_RX 13  // RX pin for SN65HVD230 (CAN_RX)
 #define pinCAN_TX 14  // TX pin for SN65HVD230 (CAN_TX)
