@@ -35,6 +35,7 @@
 #define canButtonID 0x1E0      // broadcast to CAN ID
 #define linBaud 19200          // LIN 2.x > 19.2kBaud
 #define linPause 100           // Send packets every x ms ** CAN CHANGE THIS **
+#define btnDebounce 200           // Send packets every x ms ** CAN CHANGE THIS **
 
 #define pinCAN_RX 13  // RX pin for SN65HVD230 (CAN_RX)
 #define pinCAN_TX 14  // TX pin for SN65HVD230 (CAN_TX)
@@ -63,7 +64,9 @@
 #define steering_ID 0x5C1  // steering wheel buttons
 #define light_ID 0x470     // light illu - 0% = 0x00, 0x64 = 100%
 
-uint32_t lastMillis = 0;                                                             // Counter for sending frames x ms
+uint32_t lastMillis = 0;     
+uint32_t lastMillis2 = 0;                                                             // Counter for sending frames x ms
+                                                        // Counter for sending frames x ms
 uint8_t gatewayLightData[4] = { 0x00, 0x00, 0x00, 0x00 };                            // mqb may require 4 bytes (the last two being 0xFF).  First byte is brightness
 uint8_t steeringWheelLightData[4] = { 0x00, 0xF9, 0xFF, 0xFF };                      // mqb may require 4 bytes (the last two being 0xFF).  First byte is brightness
 uint8_t recvButtonData[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };      // button data return, set to 0x00 for first run
@@ -112,6 +115,11 @@ struct {
   { 0x1E, 0x00, 0x00, 0, "Paddle Shifter Up" },  // dsg paddle up
   { 0x1F, 0x00, 0x00, 0, "Paddle Shifter Down" },  // dsg paddle down
 };
+
+/* paddle shfiters
+byte 1 = 0 - none
+byte 1 = 1 - down
+byte 1 = 2 - up
 
 /* r8 buttons:
 Exhaust: 

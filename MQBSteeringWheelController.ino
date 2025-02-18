@@ -60,10 +60,9 @@ void loop() {
       upperLightsAux = dutyCycle;
     }
 
-    DEBUG(map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN), HEX);
-
+    dutyCycle = 0;
     if (dutyCycle == 0) {
-      steeringWheelLightData[0] = 0x00;  // force light data regardless so that the steering wheel feeds back... 0x64 is full brightness
+      steeringWheelLightData[0] = 0x64;  // force light data regardless so that the steering wheel feeds back... 0x64 is full brightness
     } else {
       steeringWheelLightData[0] = map(dutyCycle, 0, upperLightsAux, 0, upperLightsLIN);  // convert the rheostat PWM into a useable (0-0x7F) output.  Assumed linear(!) *** REVIEW ***
     }
@@ -81,24 +80,28 @@ void loop() {
 
   // now that light data has been processed check for button states
   getButtonState();
-  sendButtonLINFrame();
 
-  if (hasCAN) {
-    broadcastButtonsCAN();
-  }
+  if ((millis() - lastMillis2) > btnDebounce) {  // check to see if x ms (linPause) has elapsed - slow down the frames!
+    lastMillis2 = millis();
 
-  if (hasCAN && dsgPaddleUp) {
-    sendPaddleUpFrame();
-  }
-  if (hasCAN && dsgPaddleDown) {
-    sendPaddleDownFrame();
-  }
+    sendButtonLINFrame();
+    if (hasCAN) {
+      broadcastButtonsCAN();
+    }
 
-  if (hasResistiveStereo && radioResistance != 0) {
-    radioResistor.set(radioResistance);
-    radioResistance = 0;
-    delay(100);
-    radioResistor.set(0);
-    delay(100);
+    if (hasCAN && dsgPaddleUp) {
+      sendPaddleUpFrame();
+    }
+    if (hasCAN && dsgPaddleDown) {
+      sendPaddleDownFrame();
+    }
+
+    if (hasResistiveStereo && radioResistance != 0) {
+      radioResistor.set(radioResistance);
+      radioResistance = 0;
+      delay(100);
+      radioResistor.set(0);
+      delay(100);
+    }
   }
 }

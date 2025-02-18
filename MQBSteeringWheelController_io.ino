@@ -2,6 +2,7 @@ void basicInit() {
 #ifdef ENABLE_DEBUG
   Serial.begin(115200);
 #endif
+Serial.println("hi");
   DEBUG("VW Steering Wheel LIN Controller Initialising...");
 
   DEBUG("Preferences Initialising...");

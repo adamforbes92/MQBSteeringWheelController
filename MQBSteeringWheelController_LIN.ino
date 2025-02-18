@@ -31,25 +31,40 @@ void sendLightLINFrame() {
 
 void sendButtonLINFrame() {
   buttonFound = false;
+  /* print lin traffic
+  for (int k = 0; k < arraySize(recvButtonData); k++) {  // print ALL data from the received buttons - byte 0 through 7
+    ////Serial.print(recvButtonData[k]);
+  }
+  Serial.println("");
+  */
+
+  switch (recvButtonData[6]) {
+    case 1:
+      dsgPaddleDown = true;
+      break;
+
+    case 2:
+      dsgPaddleUp = true;
+      break;
+
+    default:
+      break;
+  }
 
   if (recvButtonData[1] != 0) {                            // button pressed; parse it...
     for (int j = 0; j < arraySize(recvButtonData); j++) {  // print ALL data from the received buttons - byte 0 through 7
-      DEBUG(recvButtonData[j]);
+      //Serial.println(recvButtonData[j]);
     }
+
+    Serial.println(recvButtonData[1]);
 
     for (int i = 1; i < arraySize(buttonTranspose); i++) {
       if (recvButtonData[1] == buttonTranspose[i].fromID) {  // start at 1, 0 is ignored...
-        DEBUG(buttonTranspose[i].comment);
+        Serial.println(buttonTranspose[i].comment);
 
         transButtonDataLIN[1] = buttonTranspose[i].toID;   // found buttons, transfer the 'toID' into the LIN frame
         transButtonDataCAN[1] = buttonTranspose[i].canID;  // found buttons, transfer the 'toCAN' into the CAN frame
 
-        if (buttonTranspose[i].fromID == 0x1E) {  // special case for paddles!
-          dsgPaddleUp = true;
-        }
-        if (buttonTranspose[i].fromID == 0x1F) {  // special case for paddles!
-          dsgPaddleDown = true;
-        }
         radioResistance = buttonTranspose[i].radioOhm;
 
         chassisLIN.resetStateMachine();

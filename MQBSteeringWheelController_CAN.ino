@@ -58,6 +58,7 @@ void sendPaddleUpFrame() {
   if (!chassisCAN.write(paddlesUp)) {  // write CAN frame from the body to the Haldex
   }
   dsgPaddleUp = false;
+  Serial.println("sent shift up message");
 }
 
 void sendPaddleDownFrame() {
@@ -79,5 +80,6 @@ void sendPaddleDownFrame() {
   bitSet(paddlesDown.buf[3], 0);         // set low (off)
   if (!chassisCAN.write(paddlesDown)) {  // write CAN frame from the body to the Haldex
   }
+  Serial.println("sent shift down message");
   dsgPaddleDown = false;
 }
