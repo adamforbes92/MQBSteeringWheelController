@@ -2,7 +2,7 @@ void basicInit() {
 #ifdef ENABLE_DEBUG
   Serial.begin(115200);
 #endif
-Serial.println("hi");
+  Serial.println("hi");
   DEBUG("VW Steering Wheel LIN Controller Initialising...");
 
   DEBUG("Preferences Initialising...");
@@ -36,5 +36,6 @@ void setupPins() {
   digitalWrite(pinCS_LIN, HIGH);
   digitalWrite(pinWake_LIN, HIGH);
 
-  radioResistor.setup(resistorInc, resistorUD, resistorCS);
+  radioResistor.begin(resistorInc, resistorUD, resistorCS);
+  radioResistor.setPosition(0, true);
 }

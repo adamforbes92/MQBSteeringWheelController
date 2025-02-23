@@ -1,7 +1,7 @@
 #include <ESP32_CAN.h>    // for CAN
 #include <Preferences.h>  // stores settings - mainly for last interval speed
 #include "LIN_master_HardwareSerial_ESP32.h"
-#include <DigiPotX9Cxxx.h>
+#include "X9C10X.h"
 
 // defines
 // debug / diag / testing
@@ -45,6 +45,7 @@
 #define resistorUD 25   // up/down resistance pin for X9C103SZ
 #define resistorInc 26  // incrememnt pin for X9C103SZ
 #define resistorCS 27   // chip select pin for X9C103SZ
+#define baseResistance 10000
 
 // CAN IDs
 #define MOTOR1_ID 0x280

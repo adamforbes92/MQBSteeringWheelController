@@ -22,7 +22,7 @@ LIN_Master_HardwareSerial_ESP32 chassisLIN(Serial2, pinRX_LINchassis, pinTX_LINc
 ESP32_CAN<RX_SIZE_256, TX_SIZE_16> chassisCAN;
 
 // digipot for radio control
-DigiPot radioResistor(resistorInc, resistorUD, resistorCS);
+X9C10X radioResistor(baseResistance);
 
 // EEPROM - for remembering settings
 Preferences preferences;
@@ -97,11 +97,11 @@ void loop() {
     }
 
     if (hasResistiveStereo && radioResistance != 0) {
-      radioResistor.set(radioResistance);
+      radioResistor.setPosition(radioResistance, true);
       radioResistance = 0;
-      delay(100);
-      radioResistor.set(0);
-      delay(100);
+      delay(btnDebounce);
+      radioResistor.setPosition(radioResistance, true);
+      delay(btnDebounce);
     }
   }
 }
