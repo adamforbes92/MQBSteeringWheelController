@@ -35,7 +35,7 @@
 #define canButtonID 0x1E0      // broadcast to CAN ID
 #define linBaud 19200          // LIN 2.x > 19.2kBaud
 #define linPause 100           // Send packets every x ms ** CAN CHANGE THIS **
-#define btnDebounce 80           // Send packets every x ms ** CAN CHANGE THIS **
+#define btnDebounce 1000           // Send packets every x ms ** CAN CHANGE THIS **
 
 #define pinCAN_RX 13  // RX pin for SN65HVD230 (CAN_RX)
 #define pinCAN_TX 14  // TX pin for SN65HVD230 (CAN_TX)
@@ -104,13 +104,13 @@ struct {
   { 0x1A, 0x19, 0x03, 0, "Voice/Mic" },  // phone <- voice/mic
   { 0x1A, 0x1C, 0x04, 0, "Phone" },      // phone
   { 0x29, 0x23, 0x05, 0, "Return" },     // return <- view (on wheels with "view" button)
-  { 0x22, 0x04, 0x06, 0, "Up" },         // up
-  { 0x23, 0x05, 0x07, 0, "Down" },       // down
+  { 0x22, 0x04, 0x06, 30, "Up" },         // up
+  { 0x23, 0x05, 0x07, 60, "Down" },       // down
   { 0x09, 0x03, 0x08, 0, "Source-" },    // src-
   { 0x0A, 0x02, 0x09, 0, "Source+" },    // src+
   { 0x28, 0x07, 0x10, 0, "OK" },         // ok
-  { 0x06, 0x10, 0xA, 0, "Volume+" },     // vol+
-  { 0x07, 0x11, 0x00, 0, "Volume-" },    // vol-
+  { 0x06, 0x10, 0xA, 20, "Volume+" },     // vol+
+  { 0x07, 0x11, 0x00, 10, "Volume-" },    // vol-
   { 0x2B, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
   { 0x42, 0x0C, 0x00, 0, "Voice/Mic" },  // voice/mic <- ACC mode (on wheels with "view" button)
   { 0x1E, 0x00, 0x00, 0, "Paddle Shifter Up" },  // dsg paddle up
