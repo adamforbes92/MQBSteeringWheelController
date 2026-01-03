@@ -2,6 +2,9 @@
 # MQBSteeringWheelController
  For parsing MQB & PQ VW Steering Wheels and transmit over CAN.  Can be used to mix & match steering wheel types between variants; i.e., MQB wheel into PQ, or PQ wheel into MQB.
 
+### Purchase
+If you want to purchase an assembled controller, you can do so here: [LIN MFSW Controller - Forbes Automotive](https://forbes-automotive.com/products/lin-mfsw-controller)
+
 ## Concept
 The PQ and MQB steering wheels are controlled over LIN and require a 'backlight' frame to be sent at regular frequencies.  This keeps the steering wheel 'alive'.  It will NOT send data/button presses back without it.
 
