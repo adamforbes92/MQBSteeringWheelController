@@ -1,10 +1,6 @@
 # MFSW Controller
 
-The **MFSW Controller** is a designed to:
-> control backlights
-> read button pressses and translate into LIN, CAN, resistive or high-side outputs
-
-It's based on VAG (PQ) steering wheels and can be used as a man-in-the-middle adapter to control different steering wheels fitted into different marques.  It **reads button presses and backlight data off the steering-wheel LIN bus**, **re-maps** each new button to
+The **MFSW Controller** is based on VAG (PQ) steering wheels and can be used as a man-in-the-middle adapter to control different steering wheels fitted into different marques.  It **reads button presses and backlight data off the steering-wheel LIN bus**, **re-maps** each new button to
 whatever your old hardware expects, and **sends** the result on up to four output
 channels at once: a **translated LIN frame**, a **CAN broadcast**, a **resistive
 (digital-potentiometer) line** for legacy resistor based radios (up to 10k), and a **high-side
@@ -18,6 +14,10 @@ library for the LIN state machines, the ESP32 **TWAI** peripheral for CAN, and
 [X9C10X](https://github.com/RobTillaart/X9C10X) for the digital potentiometer.
 
 > The buttons are designed with a known-good PQ baseline that you re-learn to suit your wheel.
+
+![MFSW Controller Web UI](Images/mfswUI.png)
+
+![PCB Overview](Images/PCBOverview.png)
 
 ---
 
@@ -92,6 +92,11 @@ Defined in [include/defs.h](include/defs.h):
 
 The device breaks out to a single 12-way **MX23A12NF1** connector:
 
+![Main Connector Pinout](Images/PCBPinout.png)
+
+> Viewed into the mating face: the top row runs pin **1** (right) to pin **6** (left), and
+> the bottom row runs pin **7** (right) to pin **12** (left).
+
 | Pin | Signal | Notes |
 | --- | --- | --- |
 | 1 | `PWR_IN` | 12 V switched / ignition supply |
@@ -106,6 +111,30 @@ The device breaks out to a single 12-way **MX23A12NF1** connector:
 | 10 | `OUTPUT1` | High-side driver output |
 | 11 | — | Unused |
 | 12 | — | Unused |
+
+---
+
+## Jumpers
+
+A set of on-board jumpers lets you adapt the board to the chassis without changing firmware.
+
+![Board Jumpers](Images/PCBJumpers.png)
+
+### LIN1_MASTER
+
+Enables the master pull-up on **LIN 1** (the steering-wheel bus). This device is the master
+on the wheel bus, so this jumper should normally remain fitted.
+
+### LIN2_MASTER
+
+Enables the master pull-up on **LIN 2** (the chassis bus). Fit it when the adapter is the
+master driving the chassis LIN output; remove it if another module already provides the
+master pull-up on that bus.
+
+### R_TERM1
+
+The **CAN bus termination resistor**. If this is the only device on the CAN network, leave
+the jumper fitted. If other devices already terminate the bus, remove it.
 
 ---
 
