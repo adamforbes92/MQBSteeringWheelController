@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>MFSW Controller</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div class="bg-shape bg-shape-a"></div>
+  <div class="bg-shape bg-shape-b"></div>
+
+  <main class="container">
+    <header class="topbar">
+      <h1>MFSW Controller</h1>
+      <div class="badge-row">
+        <span id="canStatusBadge" class="badge">CAN: --</span>
+        <span id="liveButtonBadge" class="badge">Last Button: --</span>
+        <span id="learnBadge" class="badge">Learn: Idle</span>
+        <span id="fwVersion" class="badge">FW: --</span>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="setup">Setup</button>
+      <button class="tab" data-tab="buttons">Buttons</button>
+      <button class="tab" data-tab="diag">Diagnostics</button>
+      <button class="tab" data-tab="ota">OTA</button>
+    </nav>
+
+    <section id="tab-dashboard" class="panel active">
+      <article class="card">
+        <h2>Active Button</h2>
+        <div class="grid-2">
+          <div class="tile">
+            <div class="label">LIN ID (incoming)</div>
+            <div id="buttonIncoming" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">Name</div>
+            <div id="pressedButtonName" class="value value-name">--</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>CAN Output &mdash; <span id="canAddressDisplay" class="value-inline">--</span></h2>
+        <div id="canByteDisplay" class="can-frame"></div>
+      </article>
+
+      <article class="card">
+        <h2>Backlight</h2>
+        <div class="grid-3">
+          <div class="tile">
+            <div class="label">Source</div>
+            <div id="backlightSource" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">State</div>
+            <div id="backlightState" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">Brightness</div>
+            <div id="backlightPercent" class="value">--</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Raw Frames</h2>
+        <div class="stack">
+          <div class="mono-block">
+            <div class="label">Incoming LIN Data</div>
+            <div id="incomingLinData" class="mono">--</div>
+          </div>
+          <div class="mono-block">
+            <div class="label">Outgoing LIN Data</div>
+            <div id="outgoingLinData" class="mono">--</div>
+          </div>
+          <div class="mono-block">
+            <div class="label">Outgoing CAN Data</div>
+            <div id="outgoingCanData" class="mono">--</div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section id="tab-setup" class="panel">
+      <article class="card">
+        <h2>General Setup</h2>
+        <div class="form-grid">
+
+          <label class="toggle-row">
+            <span>Broadcast Over CAN</span>
+            <input id="canBroadcastEnabled" type="checkbox">
+          </label>
+          <label>
+            CAN ID (hex)
+            <input id="canBroadcastId" type="text" maxlength="3" placeholder="1E0">
+          </label>
+          <label class="toggle-row">
+            <span>Paddle via CAN</span>
+            <input id="paddlesEnabled" type="checkbox">
+          </label>
+          <label>
+            Send on CAN (ms)
+            <input id="canHoldMs" type="number" min="50" max="5000" placeholder="250">
+          </label>
+
+          <hr class="form-divider">
+
+          <label class="toggle-row">
+            <span>Use Aux Light Input</span>
+            <input id="hasAuxLight" type="checkbox">
+          </label>
+          <label class="toggle-row">
+            <span>Force Backlight On</span>
+            <input id="forceBacklight" type="checkbox">
+          </label>
+          <label id="forceBacklightPctRow" class="slider-row">
+            <span>Force Brightness: <span id="forceBacklightPctDisplay">100</span>%</span>
+            <input id="forceBacklightPercent" type="range" min="0" max="100" value="100">
+          </label>
+
+          <hr class="form-divider">
+
+          <label class="toggle-row">
+            <span>Enable LIN Output</span>
+            <input id="linOutputEnabled" type="checkbox">
+          </label>
+          <label>
+            LIN Output ID (hex)
+            <input id="linOutputId" type="text" maxlength="2" placeholder="0E">
+          </label>
+
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Aux Backlight Calibration</h2>
+        <div class="form-grid">
+          <label>
+            Dim Duty (%) &mdash; low duty = dim (e.g. 19.7)
+            <input id="auxDimDuty" type="number" min="0" max="100" step="0.1" placeholder="19.7">
+          </label>
+          <label>
+            Bright Duty (%) &mdash; high duty = bright (e.g. 98.0)
+            <input id="auxBrightDuty" type="number" min="0" max="100" step="0.1" placeholder="98.0">
+          </label>
+          <div class="help">Frequency is fixed (~79 Hz); only PWM duty varies. LIN mode remains fixed to 0&ndash;0x7F. These duty limits are used only when Aux light input is selected.</div>
+        </div>
+        <div class="button-row">
+          <button id="learnAuxDimBtn" class="btn secondary">Learn Dim (Current Duty)</button>
+          <button id="learnAuxBrightBtn" class="btn secondary">Learn Bright (Current Duty)</button>
+        </div>
+        <div id="auxDutyLive" class="status-line">Current Aux Duty: --</div>
+      </article>
+
+    </section>
+
+    <section id="tab-buttons" class="panel">
+      <article class="card">
+        <h2>Button Builder</h2>
+        <div id="learnBuilderBanner" class="learn-banner">Learn mode idle.</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>MFSW Button Name</th>
+                <th>Button ID_LIN (original)</th>
+                <th>Learn</th>
+                <th>Button ID_LIN (new)</th>
+                <th>Learn</th>
+                <th>CAN Byte (0–7)</th>
+                <th>CAN Bit (0–7)</th>
+                <th>Resistive Output (Ohm)</th>
+                <th>PNP</th>
+                <th>Latch</th>
+                <th>Delete</th>
+              </tr>
+            </thead>
+            <tbody id="mappingRows"></tbody>
+          </table>
+        </div>
+
+        <div class="button-row">
+          <button id="addRowBtn" class="btn secondary">Add Row</button>
+          <button id="saveSetupBtn" class="btn">Save Setup</button>
+        </div>
+      </article>
+    </section>
+
+    <section id="tab-diag" class="panel">
+      <article class="card">
+        <h2>System Health</h2>
+        <div class="grid-2">
+          <div class="tile">
+            <div class="label">CAN Bus</div>
+            <div id="canHealthState" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">LIN 1 (Wheel)</div>
+            <div id="lin1HealthState" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">LIN 2 (Chassis)</div>
+            <div id="lin2HealthState" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">Resistive Output</div>
+            <div id="resistiveHealthState" class="value">--</div>
+          </div>
+        </div>
+        <div class="help">Live bus status. CAN and LIN read <em>Healthy</em> while valid frames are being received. LIN 2 shows <em>Idle</em> when the chassis bus is not being polled. Resistive shows the current wiper resistance.</div>
+      </article>
+
+      <article class="card">
+        <h2>PNP Output (Pin 21)</h2>
+        <div class="form-grid">
+          <label class="toggle-row">
+            <span>Activate PNP Output</span>
+            <input id="diagPnpActive" type="checkbox">
+          </label>
+          <div class="help">Drives GPIO 21 HIGH to test the PNP transistor output circuit.</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Resistive Output (Aux)</h2>
+        <div class="form-grid">
+          <label class="toggle-row">
+            <span>Enable Resistive Output</span>
+            <input id="diagResistiveEnabled" type="checkbox">
+          </label>
+          <label class="slider-row">
+            <span>Resistance: <span id="diagResistiveOhmDisplay">0</span> &Omega;</span>
+            <input id="diagResistiveOhm" type="range" min="0" max="10000" step="100" value="0">
+          </label>
+          <div class="help">Holds the X9C10X digital potentiometer at the selected resistance for bench testing. Overrides button-triggered momentary outputs.</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Test Resistance</h2>
+        <div class="form-grid">
+          <label class="toggle-row">
+            <span>Enable Test Resistance</span>
+            <input id="testResistanceEnabled" type="checkbox">
+          </label>
+          <div class="slider-row">
+            <span>Test value: <span id="testResistanceOhmDisplay">0</span> &Omega;</span>
+          </div>
+          <div class="button-row">
+            <button id="testResistanceDownBtn" class="btn secondary">&minus; 200 &Omega;</button>
+            <button id="testResistanceUpBtn" class="btn secondary">+ 200 &Omega;</button>
+          </div>
+          <div class="help">Each press steps the test value by 200 &Omega;, pulses the output DOWN to that value for 0.5 s, then returns it to idle HIGH. Use this to probe which resistances the stereo responds to.</div>
+        </div>
+      </article>
+    </section>
+
+    <section id="tab-ota" class="panel">
+      <article class="card">
+        <h2>OTA Update</h2>
+        <div id="fwVersionOta" class="status-line">FW: --</div>
+        <p>Upload firmware binary over WiFi.</p>
+        <label>
+          Firmware (.bin)
+          <input id="otaBin" type="file" accept=".bin,application/octet-stream">
+        </label>
+        <div class="button-row">
+          <button id="otaUploadBtn" class="btn">Upload Firmware</button>
+        </div>
+        <div id="otaStatus" class="status-line">Idle</div>
+      </article>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
