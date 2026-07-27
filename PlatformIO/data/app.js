@@ -61,7 +61,7 @@ function wireControls() {
   wireExclusive("forceBacklight", "hasAuxLight");
 
   // Other auto-save toggles (no mutual exclusion).
-  ["canBroadcastEnabled", "paddlesEnabled", "linOutputEnabled"].forEach((id) => {
+  ["canBroadcastEnabled", "paddlesEnabled", "linOutputEnabled", "digipot20kEnabled"].forEach((id) => {
     document.getElementById(id).addEventListener("change", saveSetup);
   });
 
@@ -138,6 +138,7 @@ async function loadSetup() {
     document.getElementById("canHoldMs").value = Number(setup.canHoldMs || 250);
     document.getElementById("linOutputEnabled").checked = !!setup.linOutputEnabled;
     document.getElementById("linOutputId").value = hex2(setup.linOutputId != null ? setup.linOutputId : 0x0E);
+    document.getElementById("digipot20kEnabled").checked = !!setup.digipot20kEnabled;
     document.getElementById("auxDimDuty").value    = Number((setup.auxDimDuty    != null ? setup.auxDimDuty    : 197) / 10).toFixed(1);
     document.getElementById("auxBrightDuty").value = Number((setup.auxBrightDuty != null ? setup.auxBrightDuty : 980) / 10).toFixed(1);
 
@@ -206,11 +207,8 @@ async function loadStatus() {
     setStatusValue("lin2HealthState",
       s.lin2Healthy ? "Healthy" : (s.lin2Active ? "No Data" : "Idle"),
       s.lin2Healthy);
-    if (s.hasResistiveStereo) {
-      setStatusValue("resistiveHealthState", `${Number(s.resistiveOhmNow || 0)} \u03A9`, true);
-    } else {
-      setStatusValue("resistiveHealthState", "Disabled", false);
-    }
+    setStatusValue("resistiveHealthState", `${Number(s.resistiveOhmNow || 0)} \u03A9`, true);
+    if (resSlider && s.digipotMaxOhm) resSlider.max = Number(s.digipotMaxOhm);
 
     const btnLabel = s.pressedButtonName
       ? `${s.pressedButtonName} (${toHexId(s.latestButtonId)})`
@@ -398,6 +396,7 @@ async function saveSetup() {
     canHoldMs: Math.max(50, num(document.getElementById("canHoldMs").value)) || 250,
     linOutputEnabled: document.getElementById("linOutputEnabled").checked,
     linOutputId: parseInt(document.getElementById("linOutputId").value, 16) || 0x0E,
+    digipot20kEnabled: document.getElementById("digipot20kEnabled").checked,
     auxDimDuty:    Math.round(parseFloat(document.getElementById("auxDimDuty").value) * 10) || 197,
     auxBrightDuty: Math.round(parseFloat(document.getElementById("auxBrightDuty").value) * 10) || 980,
     mappings: mappings.map((m) => ({

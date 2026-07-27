@@ -42,17 +42,16 @@ void pollCanRx() {
 
   while (twai_receive(&frame, 0) == ESP_OK) {
     lastCanRxMs = millis();  // record valid frame arrival for CAN health
-#if ChassisCANDebug
-    DEBUG_("Length Recv: %u CAN ID: 0x%03X Buffer: ", frame.data_length_code, frame.identifier);
+    DEBUG_CHASSIS_CAN_("RX length=%u ID=0x%03X data=", frame.data_length_code, frame.identifier);
     for (uint8_t i = 0; i < frame.data_length_code; i++) {
-      DEBUG_("%02X ", frame.data[i]);
+      DEBUG_CHASSIS_CAN_("%02X ", frame.data[i]);
     }
-    DEBUG("");
-#endif
+    DEBUG_CHASSIS_CAN("");
   }
 }
 
 void broadcastButtonsCAN() {
+  static bool activeFrameSent = false;
   uint8_t payload[8] = {0};
   const uint32_t now = millis();
   bool holdActive = false;
@@ -71,9 +70,10 @@ void broadcastButtonsCAN() {
   lastCanOutId = canBroadcastId;
   portEXIT_CRITICAL(&stateMux);
 
-  // Only transmit when there is actually a button held — avoids flooding the
-  // bus (and the debug log) with zero frames every 50 ms when idle.
-  if (!canBroadcastEnabled || !holdActive) {
+  // Send each held state continuously, then one all-zero release frame when
+  // the hold window ends. Staying silent after an active frame makes a
+  // stateful receiver retain the prior button state indefinitely.
+  if (!canBroadcastEnabled || (!holdActive && !activeFrameSent)) {
     return;
   }
 
@@ -81,6 +81,8 @@ void broadcastButtonsCAN() {
     DEBUG("Chassis TWAI Write TX Fail!");
     return;
   }
+
+  activeFrameSent = holdActive;
 }
 
 void broadcastGRATask(void* parameter) {

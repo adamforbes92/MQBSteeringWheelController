@@ -64,16 +64,6 @@ void getLightLINFrame()
     memcpy(gatewayLightData, buf, sizeof(gatewayLightData));
     chassisLinLastOkMs = millis();  // LIN 2 healthy
   }
-  else
-  {
-    static uint32_t lastErrMs = 0;
-    const uint32_t nowMs = millis();
-    if (nowMs - lastErrMs >= 1000)
-    {
-      lastErrMs = nowMs;
-      DEBUG("Chassis LIN light RX error 0x%02X — keeping last value", static_cast<uint8_t>(linErr));
-    }
-  }
 }
 
 void getButtonState()
@@ -98,13 +88,6 @@ void getButtonState()
   const LIN_Master_Base::error_t linErr = steeringWheelLIN.getError();
   if (linErr != LIN_Master_Base::NO_ERROR)
   {
-    static uint32_t linErrLast = 0;
-    const uint32_t nowMs = millis();
-    if (nowMs - linErrLast >= 1000)
-    {
-      linErrLast = nowMs;
-      DEBUG("SW LIN RX error 0x%02X — frame discarded", static_cast<uint8_t>(linErr));
-    }
     memset(recvButtonData, 0, sizeof(recvButtonData));
   }
   else
@@ -164,14 +147,10 @@ void sendButtonLINFrame()
 
   if (recvButtonData[1] != 0)
   {
-    DEBUG("Button ID: %u", recvButtonData[1]);
-
     for (size_t i = 0; i < buttonMappingCount; i++)
     {
       if (recvButtonData[1] == buttonMappings[i].oldButtonId)
       {
-        DEBUG("Button: %s", buttonMappings[i].name);
-
         transButtonDataLIN[1] = buttonMappings[i].newLinButtonId;
 
         // Extend the CAN hold window on every LIN poll cycle that sees this button active
@@ -225,8 +204,4 @@ void sendButtonLINFrame()
   lastLinOutId = linButtonID;
   portEXIT_CRITICAL(&stateMux);
 
-  if (!buttonFound && recvButtonData[1] != 0)
-  {
-    DEBUG("Button not found, program it?");
-  }
 }

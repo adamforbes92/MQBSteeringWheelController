@@ -14,6 +14,7 @@
 */
 
 #include "power_manager.h"
+#include "defs.h"
 #include <WiFi.h>
 
 #if __has_include("esp_bt.h")
@@ -43,6 +44,7 @@ __attribute__((weak)) void powerOnExitReduced(void) {}
 // ---- Helpers ----------------------------------------------------------------
 static void powerLog(const char *fmt, ...)
 {
+#if enableDebug
   if (!g_cfg.verbose)
     return;
   char buf[128];
@@ -51,6 +53,9 @@ static void powerLog(const char *fmt, ...)
   vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
   Serial.printf("[PWR] %s\n", buf);
+#else
+  (void)fmt;
+#endif
 }
 
 static void powerApplyLightSleep(bool enable)
@@ -210,7 +215,7 @@ power_config_t powerDefaultConfig(void)
 
   c.enableAutoLightSleep = false; // advanced — see header
 
-  c.verbose = true;
+  c.verbose = enableDebug;
   c.taskTickMs = 1000;
   return c;
 }

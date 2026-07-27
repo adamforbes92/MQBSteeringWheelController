@@ -13,20 +13,57 @@
 
 #include "ver.h"
 
-#define FW_VERSION "1.02"
+#define FW_VERSION "1.01"
 
+#define enableDebug 0
+#define debugIO 0
+#define debugCAN 0
+#define debugLIN 0
 #define ChassisCANDebug 0
-#define hasResistiveStereo 1
-#define hasAuxLight 1
-#define hasCAN 1
 #define detailedDebugWiFi 0
+#define ENABLE_IO_TEST 0
+#define serialMonitorRefresh 1000
 
-#ifdef ENABLE_DEBUG
+#if enableDebug
 #define DEBUG(x, ...) Serial.printf(x "\n", ##__VA_ARGS__)
 #define DEBUG_(x, ...) Serial.printf(x, ##__VA_ARGS__)
 #else
 #define DEBUG(x, ...)
 #define DEBUG_(x, ...)
+#endif
+
+#if enableDebug && debugIO
+#define DEBUG_IO(x, ...) Serial.printf("[IO] " x "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_IO(x, ...)
+#endif
+
+#if enableDebug && debugCAN
+#define DEBUG_CAN(x, ...) Serial.printf("[CAN] " x "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_CAN(x, ...)
+#endif
+
+#if enableDebug && debugLIN
+#define DEBUG_LIN(x, ...) Serial.printf("[LIN] " x "\n", ##__VA_ARGS__)
+#define DEBUG_LIN_(x, ...) Serial.printf("[LIN] " x, ##__VA_ARGS__)
+#else
+#define DEBUG_LIN(x, ...)
+#define DEBUG_LIN_(x, ...)
+#endif
+
+#if enableDebug && detailedDebugWiFi
+#define DEBUG_WIFI(x, ...) Serial.printf("[WiFi] " x "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_WIFI(x, ...)
+#endif
+
+#if enableDebug && ChassisCANDebug
+#define DEBUG_CHASSIS_CAN(x, ...) Serial.printf("[CAN] " x "\n", ##__VA_ARGS__)
+#define DEBUG_CHASSIS_CAN_(x, ...) Serial.printf("[CAN] " x, ##__VA_ARGS__)
+#else
+#define DEBUG_CHASSIS_CAN(x, ...)
+#define DEBUG_CHASSIS_CAN_(x, ...)
 #endif
 
 constexpr int pinTX_LINSteeringWheel = 17;
@@ -47,13 +84,13 @@ constexpr uint32_t btnDebounce = 1000;
 
 constexpr int pinCAN_RX = 13;
 constexpr int pinCAN_TX = 14;
+constexpr int pinOnboardLed = 2;
 
 constexpr int pinAuxLight = 39;
 
 constexpr int resistorUD = 25;
 constexpr int resistorInc = 26;
 constexpr int resistorCS = 27;
-constexpr uint16_t baseResistance = 10000;
 
 constexpr int pinPNP = 21;
 constexpr uint8_t FLAG_ACTIVATES_PNP = 0x01;  // bit 0: trigger PNP output when pressed

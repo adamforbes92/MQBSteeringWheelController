@@ -39,10 +39,8 @@ static String frameToHex(const uint8_t* data, uint8_t len) {
 void setupWiFi() {
   WiFi.hostname(wifiHostName);
 
-#if detailedDebugWiFi
-  DEBUG("Beginning WiFi...");
-  DEBUG("Creating Access Point...");
-#endif
+  DEBUG_WIFI("Beginning WiFi...");
+  DEBUG_WIFI("Creating Access Point...");
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
@@ -139,13 +137,13 @@ void setupApiServer() {
     const bool lin1Healthy = swLinLastOkMs != 0 && (nowMs - swLinLastOkMs) < kLinStaleMs;
     const bool lin2Active = (!useAuxLightSource && !forceBacklight) || linOutputEnabled;
     const bool lin2Healthy = chassisLinLastOkMs != 0 && (nowMs - chassisLinLastOkMs) < kLinStaleMs;
-    doc["canHealthy"]  = (hasCAN != 0) && canHealthy();
-    doc["canEnabled"]  = (hasCAN != 0);
+    doc["canHealthy"]  = canHealthy();
+    doc["canEnabled"]  = canBroadcastEnabled || paddlesEnabled;
     doc["lin1Healthy"] = lin1Healthy;
     doc["lin2Healthy"] = lin2Healthy;
     doc["lin2Active"]  = lin2Active;
-    doc["resistiveOhmNow"] = (hasResistiveStereo != 0) ? radioResistor.getOhm() : 0;
-    doc["hasResistiveStereo"] = (hasResistiveStereo != 0);
+    doc["resistiveOhmNow"] = radioResistor.getOhm();
+    doc["digipotMaxOhm"] = digipotMaxOhm;
 
     String payload;
     serializeJson(doc, payload);
@@ -165,6 +163,7 @@ void setupApiServer() {
     doc["canHoldMs"] = canHoldMs;
     doc["linOutputEnabled"] = linOutputEnabled;
     doc["linOutputId"] = linOutputId;
+    doc["digipot20kEnabled"] = digipot20kEnabled;
 
     JsonArray mappings = doc["mappings"].to<JsonArray>();
     for (size_t i = 0; i < buttonMappingCount; i++) {
@@ -224,6 +223,7 @@ void setupApiServer() {
         }
         linOutputEnabled = doc["linOutputEnabled"] | (bool)linOutputEnabled;
         linOutputId      = doc["linOutputId"]      | (uint8_t)linOutputId;
+        digipot20kEnabled = doc["digipot20kEnabled"] | (bool)digipot20kEnabled;
 
         if (auxBrightDutyPct10 <= auxDimDutyPct10) {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"bright duty must be greater than dim duty\"}");
@@ -255,6 +255,7 @@ void setupApiServer() {
           buttonMappingCount = newCount;
         }
 
+        savePreferences();
         request->send(200, "application/json", "{\"ok\":true}");
       },
       nullptr,
@@ -397,7 +398,7 @@ void setupApiServer() {
         diagResistiveEnabled = body["enabled"] | (bool)diagResistiveEnabled;
         {
           int ohm = body["ohm"] | (int)diagResistiveOhm;
-          diagResistiveOhm = (uint16_t)(ohm < 0 ? 0 : (ohm > 10000 ? 10000 : ohm));
+          diagResistiveOhm = (uint16_t)(ohm < 0 ? 0 : (ohm > digipotMaxOhm ? digipotMaxOhm : ohm));
         }
         request->send(200, "application/json", "{\"ok\":true}");
       });
@@ -422,7 +423,7 @@ void setupApiServer() {
         if (dir != 0) {
           int v = (int)testResistanceOhm + (dir > 0 ? 200 : -200);
           if (v < 0) v = 0;
-          if (v > 10000) v = 10000;
+          if (v > digipotMaxOhm) v = digipotMaxOhm;
           testResistanceOhm = (uint16_t)v;
           if (testResistanceEnabled) {
             testResistancePulse = true;  // task pulses the new value for 0.5 s
@@ -452,21 +453,27 @@ void setupApiServer() {
       [](AsyncWebServerRequest* request, const String& filename, size_t index, uint8_t* data, size_t len, bool final) {
         (void)request;
         if (index == 0) {
-          DEBUG("OTA upload started: %s", filename.c_str());
+          DEBUG_WIFI("OTA upload started: %s", filename.c_str());
           if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+#if enableDebug && detailedDebugWiFi
             Update.printError(Serial);
+#endif
           }
         }
 
         if (len > 0 && Update.write(data, len) != len) {
+      #if enableDebug && detailedDebugWiFi
           Update.printError(Serial);
+#endif
         }
 
         if (final) {
           if (!Update.end(true)) {
+#if enableDebug && detailedDebugWiFi
             Update.printError(Serial);
+#endif
           }
-          DEBUG("OTA upload completed, %u bytes", static_cast<unsigned>(index + len));
+          DEBUG_WIFI("OTA upload completed, %u bytes", static_cast<unsigned>(index + len));
         }
       });
 

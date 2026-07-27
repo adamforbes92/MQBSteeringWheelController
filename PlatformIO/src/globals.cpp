@@ -3,7 +3,7 @@
 LIN_Master_HardwareSerial_ESP32 steeringWheelLIN(Serial1, pinRX_LINSteeringWheel, pinTX_LINSteeringWheel, "LIN_SteeringWheel");
 LIN_Master_HardwareSerial_ESP32 chassisLIN(Serial2, pinRX_LINchassis, pinTX_LINchassis, "LIN_chassis");
 
-X9C103 radioResistor(baseResistance);
+X9C103 radioResistor;
 Preferences preferences;
 AsyncWebServer server(80);
 
@@ -34,6 +34,8 @@ volatile uint16_t diagResistiveOhm = 0;
 volatile bool testResistanceEnabled = false;
 volatile uint16_t testResistanceOhm = 0;
 volatile bool testResistancePulse = false;
+volatile bool digipot20kEnabled = false;
+uint16_t digipotMaxOhm = 10000;
 
 volatile bool dsgPaddleUp = false;
 volatile bool dsgPaddleDown = false;
@@ -68,7 +70,7 @@ size_t buttonMappingCount = 16;
 volatile uint16_t canBroadcastId = canButtonID;
 volatile bool canBroadcastEnabled = true;
 volatile bool paddlesEnabled = false;
-volatile bool useAuxLightSource = hasAuxLight;
+volatile bool useAuxLightSource = true;
 volatile bool forceBacklight = false;
 volatile uint8_t forceBacklightPercent = 100;
 
@@ -122,6 +124,8 @@ void loadPreferences() {
   canHoldMs             = preferences.getUShort("canHoldMs",  canHoldMs);
   linOutputEnabled      = preferences.getBool("linOut",       linOutputEnabled);
   linOutputId           = preferences.getUChar("linOutId",    linOutputId);
+  digipot20kEnabled     = preferences.getBool("digipot20k",   false);
+  digipotMaxOhm         = digipot20kEnabled ? 20000 : 10000;
   if (auxBrightDutyPct10 <= auxDimDutyPct10) {
     auxDimDutyPct10    = 197;
     auxBrightDutyPct10 = 980;
@@ -142,4 +146,5 @@ void savePreferences() {
   preferences.putUShort("canHoldMs",   canHoldMs);
   preferences.putBool("linOut",        linOutputEnabled);
   preferences.putUChar("linOutId",     linOutputId);
+  preferences.putBool("digipot20k",    digipot20kEnabled);
 }

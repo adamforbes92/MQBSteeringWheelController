@@ -90,14 +90,21 @@ void setupPins() {
   pinMode(pinPNP, OUTPUT);
   digitalWrite(pinPNP, LOW);
 
+  pinMode(resistorUD, OUTPUT);
+  pinMode(resistorInc, OUTPUT);
+  pinMode(resistorCS, OUTPUT);
+  digitalWrite(resistorUD, HIGH);
+  digitalWrite(resistorInc, HIGH);
+  digitalWrite(resistorCS, HIGH);
+
   radioResistor.begin(resistorInc, resistorUD, resistorCS);
   // Idle HIGH: hold the wiper at maximum resistance so the stereo stays
   // responsive. Commanded resistances momentarily toggle DOWN from here.
-  radioResistor.setPosition(radioResistor.Ohm2Position(baseResistance), true);
+  radioResistor.setPosition(radioResistor.Ohm2Position(digipotMaxOhm), true);
 }
 
 void basicInit() {
-#ifdef ENABLE_DEBUG
+#if enableDebug
   Serial.begin(115200);
 #endif
 
@@ -106,6 +113,7 @@ void basicInit() {
   DEBUG("Preferences Initialising...");
   preferences.begin("settings", false);
   loadPreferences();
+  radioResistor = X9C103(digipotMaxOhm);
   DEBUG("Preferences Initialised!");
 
   DEBUG("IO Pins Initialising...");

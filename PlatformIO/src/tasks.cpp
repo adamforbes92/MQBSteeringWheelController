@@ -1,11 +1,84 @@
 #include "tasks.h"
 
 #include <Arduino.h>
+#include <driver/twai.h>
 
 #include "globals.h"
 #include "io.h"
 #include "CAN.h"
 #include "LIN.h"
+
+#if ENABLE_IO_TEST
+struct IoTestState {
+  bool highSide;
+  bool lin1ToLin2;
+  bool lin2ToLin1;
+  bool canReceived;
+  uint16_t resistanceOhm;
+};
+
+static bool testLin(HardwareSerial& sender, HardwareSerial& receiver, uint8_t marker) {
+  while (receiver.available()) receiver.read();
+
+  const uint8_t message[] = {0x55, marker, 0xAA};
+  sender.write(message, sizeof(message));
+  sender.flush();
+
+  for (uint8_t index = 0; index < sizeof(message); index++) {
+    const uint32_t timeout = millis() + 20;
+    while (!receiver.available() && (int32_t)(millis() - timeout) < 0) {
+      vTaskDelay(1);
+    }
+    if (!receiver.available() || receiver.read() != message[index]) return false;
+  }
+  return true;
+}
+
+static void showLinStatus(bool healthy) {
+  if (healthy) {
+    digitalWrite(pinOnboardLed, HIGH);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    return;
+  }
+
+  for (uint8_t flash = 0; flash < 8; flash++) {
+    digitalWrite(pinOnboardLed, !digitalRead(pinOnboardLed));
+    vTaskDelay(pdMS_TO_TICKS(250));
+  }
+}
+
+void ioTestTask(void* parameter) {
+  (void)parameter;
+
+  IoTestState test = {};
+  pinMode(pinOnboardLed, OUTPUT);
+  digitalWrite(pinOnboardLed, LOW);
+  digitalWrite(pinPNP, LOW);
+  radioResistor.setPosition(radioResistor.Ohm2Position(0), true);
+  DEBUG("[IO TEST] ENABLED - link LIN1 and LIN2");
+
+  while (true) {
+    test.highSide = !test.highSide;
+    digitalWrite(pinPNP, test.highSide);
+    radioResistor.setPosition(radioResistor.Ohm2Position(test.resistanceOhm), true);
+
+    test.lin1ToLin2 = testLin(Serial1, Serial2, 0x12);
+    test.lin2ToLin1 = testLin(Serial2, Serial1, 0x21);
+    pollCanRx();
+    test.canReceived = canHealthy();
+
+    DEBUG("[IO TEST] HS=%s LIN1>2=%s LIN2>1=%s CAN=%s R=%uK",
+          test.highSide ? "ON" : "OFF",
+          test.lin1ToLin2 ? "GOOD" : "FAIL",
+          test.lin2ToLin1 ? "GOOD" : "FAIL",
+          test.canReceived ? "GOOD" : "WAIT",
+          test.resistanceOhm / 1000);
+
+    showLinStatus(test.lin1ToLin2 && test.lin2ToLin1);
+    test.resistanceOhm = test.resistanceOhm >= digipotMaxOhm ? 0 : test.resistanceOhm + 1000;
+  }
+}
+#endif
 
 static void updateBacklightState() {
   // -----------------------------------------------------------------------
@@ -26,23 +99,15 @@ static void updateBacklightState() {
     if (snap.riseCount > 0) {
       const uint32_t avgPeriodUs = snap.sumPeriodUs / snap.riseCount;
       const uint32_t avgOnUs     = snap.sumOnUs     / snap.riseCount;
-      const uint32_t freqHz      = avgPeriodUs > 0 ? 1000000UL / avgPeriodUs : 0;
-      const uint32_t dutyPct10   = avgPeriodUs > 0
-                                   ? (avgOnUs * 1000UL / avgPeriodUs)  // ×10 → 0.1 % precision
-                                   : 0;
       total_Time = avgPeriodUs;
       on_Time    = avgOnUs;
       dutyCycle  = avgPeriodUs;  // period in µs — used for mapping and learn capture
 
-      DEBUG("AUX [%lu edges/s]: %lu Hz  period=%lu us  on=%lu us  duty=%lu.%lu%%",
-            snap.riseCount, freqHz, avgPeriodUs, avgOnUs,
-            dutyPct10 / 10, dutyPct10 % 10);
     } else {
       // No edges in the last second — signal absent or frequency < 1 Hz.
       total_Time = 0;
       on_Time    = 0;
       dutyCycle  = 0;
-      DEBUG("AUX: no signal (0 edges in 1 s window)");
     }
   }
 
@@ -75,13 +140,47 @@ static void updateBacklightState() {
     // No edges in the last window — could be DC high (lights full on) or signal absent.
     const bool pinHigh = digitalRead(pinAuxLight) == HIGH;
     steeringWheelLightData[0] = pinHigh ? upperLightsLIN : 0;
-    if (pinHigh) {
-      DEBUG("AUX: DC high → full brightness");
-    } else {
-      DEBUG("AUX: no signal (0 edges in 1 s window)");
-    }
   }
 }
+
+#if enableDebug
+static void debugTask(void* parameter) {
+  (void)parameter;
+
+  while (true) {
+    const uint32_t periodUs = total_Time;
+    const uint32_t onUs = on_Time;
+    const uint32_t auxHz = periodUs > 0 ? 1000000UL / periodUs : 0;
+    const uint32_t auxDutyPct10 = periodUs > 0 ? onUs * 1000UL / periodUs : 0;
+    const uint32_t nowMs = millis();
+    const bool lin1Healthy = swLinLastOkMs != 0 && nowMs - swLinLastOkMs < 1000UL;
+    const bool lin2Healthy = chassisLinLastOkMs != 0 && nowMs - chassisLinLastOkMs < 1000UL;
+
+  #if debugIO
+    DEBUG_IO("resistive=%lu/%u ohm high-side=%s aux=%lu.%lu%% @ %lu Hz",
+             static_cast<unsigned long>(radioResistor.getOhm()), digipotMaxOhm,
+             digitalRead(pinPNP) == HIGH ? "ON" : "OFF",
+             auxDutyPct10 / 10, auxDutyPct10 % 10, auxHz);
+  #endif
+  #if debugLIN
+    DEBUG_LIN("LIN1=%s LIN2=%s RX=0x%02lX TX=0x%02lX",
+              lin1Healthy ? "HEALTHY" : "NO DATA",
+              lin2Healthy ? "HEALTHY" : "NO DATA",
+              static_cast<unsigned long>(lastLinInId),
+              static_cast<unsigned long>(lastLinOutId));
+  #endif
+  #if debugCAN
+    DEBUG_CAN("state=%s RX=%s TX=%s ID=0x%03X",
+          canBroadcastEnabled || paddlesEnabled ? "ENABLED" : "DISABLED",
+          canHealthy() ? "HEALTHY" : "NO DATA",
+          canBroadcastEnabled ? "ENABLED" : "DISABLED",
+          canBroadcastId);
+  #endif
+
+    vTaskDelay(pdMS_TO_TICKS(serialMonitorRefresh));
+  }
+}
+#endif
 
 // Single sequential task for the steering wheel LIN bus.
 // Previously split into two tasks (lightLinTask + buttonLinTask), which caused
@@ -117,9 +216,7 @@ static void debounceOutputTask(void* parameter) {
   (void)parameter;
 
   while (1) {
-    if (hasCAN) {
-      broadcastButtonsCAN();
-    }
+    broadcastButtonsCAN();
 
     // PNP output: diagnostic override → latch state → momentary hold.
     {
@@ -158,8 +255,8 @@ static void debounceOutputTask(void* parameter) {
     }
 
     // Resistive output: idle HIGH; commanded resistances toggle DOWN then back.
-    if (hasResistiveStereo) {
-      const uint8_t idlePos = radioResistor.Ohm2Position(baseResistance);  // idle = max resistance (HIGH)
+    {
+      const uint8_t idlePos = radioResistor.Ohm2Position(digipotMaxOhm);  // idle = max resistance (HIGH)
       static bool prevDiagResistive = false;
       static uint8_t lastDiagPos = 0xFF;  // 0xFF = unset sentinel; reset on disable
       if (diagResistiveEnabled) {
@@ -213,6 +310,11 @@ static void debounceOutputTask(void* parameter) {
 }
 
 void startTasks() {
+#if ENABLE_IO_TEST
+  xTaskCreatePinnedToCore(ioTestTask, "ioTestTask", 4096, nullptr, 3, nullptr, 1);
+  return;
+#endif
+
   if (steeringWheelLinMutex == nullptr) {
     steeringWheelLinMutex = xSemaphoreCreateMutex();
   }
@@ -220,6 +322,10 @@ void startTasks() {
   if (chassisLinMutex == nullptr) {
     chassisLinMutex = xSemaphoreCreateMutex();
   }
+
+#if enableDebug
+  xTaskCreatePinnedToCore(debugTask, "debugTask", 3072, nullptr, 1, nullptr, 0);
+#endif
 
 
   // GRA (paddle shift) task — broadcasts continuously at 20 ms, matching DSG keepalive expectation

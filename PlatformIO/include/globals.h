@@ -40,6 +40,8 @@ extern volatile uint16_t diagResistiveOhm; // diagnostic resistance value (ohms)
 extern volatile bool testResistanceEnabled; // test mode: pulse resistance down then return to idle high
 extern volatile uint16_t testResistanceOhm;  // current test resistance value (ohms)
 extern volatile bool testResistancePulse;    // set by API to request a single 0.5 s pulse
+extern volatile bool digipot20kEnabled;      // persisted selection; applied on next boot
+extern uint16_t digipotMaxOhm;                // maximum resistance active for this boot
 
 extern volatile bool dsgPaddleUp;
 extern volatile bool dsgPaddleDown;

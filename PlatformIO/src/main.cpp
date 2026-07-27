@@ -18,6 +18,9 @@ Created by Forbes Automotive.com
 
 void setup() {
   basicInit(); // basic init for IO
+#if ENABLE_IO_TEST
+  startTasks(); // manufacturing IO test owns the outputs and bus interfaces
+#else
   setupWiFi(); // setup WiFi connection and mDNS
   setupApiServer(); // setup API server
 
@@ -28,6 +31,7 @@ void setup() {
   powerInit(&pcfg);
 
   startTasks(); // begin FreeRTOS tasks for LIN handling, CAN handling, and output control
+#endif
 }
 
 void loop() {
