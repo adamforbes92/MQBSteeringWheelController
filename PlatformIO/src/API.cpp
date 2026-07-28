@@ -145,6 +145,21 @@ void setupApiServer() {
     doc["resistiveOhmNow"] = radioResistor.getOhm();
     doc["digipotMaxOhm"] = digipotMaxOhm;
 
+    // ---- OpenHaldex live state -----------------------------------------
+    // Current mode last seen on the OpenHaldex broadcast (0x6B0), and whether
+    // a commanded change is still awaiting confirmation.
+    {
+      const uint8_t ohMode = openHaldexCurrentMode;
+      const bool ohFresh = openHaldexLastRxMs != 0 && (nowMs - openHaldexLastRxMs) < 2000UL;
+      static const char* const kOhNames[OPENHALDEX_MODE_COUNT] = {
+          "Stock", "FWD", "50:50", "60:40", "75:25", "Expert"};
+      doc["openHaldexPresent"] = ohFresh;
+      doc["openHaldexMode"] = ohMode;
+      doc["openHaldexModeStr"] =
+          (ohFresh && ohMode < OPENHALDEX_MODE_COUNT) ? kOhNames[ohMode] : "--";
+      doc["openHaldexPending"] = (openHaldexTargetMode != OPENHALDEX_MODE_UNKNOWN);
+    }
+
     String payload;
     serializeJson(doc, payload);
     request->send(200, "application/json", payload);
@@ -175,6 +190,7 @@ void setupApiServer() {
       row["canBitIndex"] = buttonMappings[i].canBitIndex;    // 0-7
       row["resistiveOhm"] = buttonMappings[i].resistiveOhm;
       row["flags"] = buttonMappings[i].flags;
+      row["openHaldexMode"] = buttonMappings[i].openHaldexMode;  // 0-5 or 255 (push-to-next)
     }
 
     String payload;
@@ -251,6 +267,7 @@ void setupApiServer() {
             }
             buttonMappings[i].resistiveOhm = row["resistiveOhm"] | (uint16_t)0;
             buttonMappings[i].flags        = row["flags"]        | (uint8_t)0;
+            buttonMappings[i].openHaldexMode = row["openHaldexMode"] | (uint8_t)0;
           }
           buttonMappingCount = newCount;
         }

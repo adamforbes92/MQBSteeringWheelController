@@ -93,8 +93,9 @@ constexpr int resistorInc = 26;
 constexpr int resistorCS = 27;
 
 constexpr int pinPNP = 21;
-constexpr uint8_t FLAG_ACTIVATES_PNP = 0x01;  // bit 0: trigger PNP output when pressed
-constexpr uint8_t FLAG_PNP_LATCH     = 0x02;  // bit 1: latch PNP on press, unlatch on next press
+constexpr uint8_t FLAG_ACTIVATES_PNP      = 0x01;  // bit 0: trigger PNP output when pressed
+constexpr uint8_t FLAG_LATCH              = 0x02;  // bit 1: latch on press, clear on next press — applies to PNP, CAN and LIN outputs
+constexpr uint8_t FLAG_OPENHALDEX_CONTROL = 0x04;  // bit 2: button commands an OpenHaldex mode change (exclusive: no PNP/CAN/LIN/resistive output)
 
 constexpr uint16_t MOTOR1_ID = 0x280;
 constexpr uint16_t MOTOR2_ID = 0x288;
@@ -113,6 +114,16 @@ constexpr uint16_t HALDEX_ID = 0x2C0;
 constexpr uint16_t steering_ID = 0x5C1;
 constexpr uint16_t light_ID = 0x470;
 
+// --- OpenHaldex external control (see OpenHaldex firmware) -------------------
+// Send the desired mode to the OpenHaldex unit: data[0] = mode (0..5), rest 0.
+constexpr uint16_t OPENHALDEX_EXTERNAL_CONTROL_ID = 0x6A0;
+// OpenHaldex broadcasts its live state here; data[6] = current mode.
+constexpr uint16_t OPENHALDEX_BROADCAST_ID        = 0x6B0;
+// Modes: 0=Stock 1=FWD 2=50:50 3=60:40 4=75:25 5=Expert
+constexpr uint8_t  OPENHALDEX_MODE_COUNT     = 6;
+constexpr uint8_t  OPENHALDEX_MODE_PUSH_NEXT = 0xFF;  // sentinel: advance to next mode each press
+constexpr uint8_t  OPENHALDEX_MODE_UNKNOWN   = 0xFF;  // no broadcast received yet
+
 constexpr const char* wifiHostName = "MFSWController";
 
 constexpr size_t kMaxButtonMappings = 24;
@@ -124,7 +135,8 @@ struct ButtonMapping {
   uint8_t canByteIndex;  // 0-7: byte in 8-byte CAN frame; 0xFF = no CAN output
   uint8_t canBitIndex;   // 0-7: bit within that byte
   uint16_t resistiveOhm; // resistive output (in ohms)
-  uint8_t flags;         // bit 0: trigger PNP output on pin 21 when pressed
+  uint8_t flags;         // bit 0: PNP, bit 1: latch, bit 2: OpenHaldex control
+  uint8_t openHaldexMode; // 0-5 fixed OpenHaldex mode, 0xFF = push-to-next (used when FLAG_OPENHALDEX_CONTROL set)
 };
 
 enum LearnTarget : uint8_t {

@@ -4,3 +4,4 @@ void getLightLINFrame();
 void getButtonState();
 void sendLightLINFrame();
 void sendButtonLINFrame();
+void sendLatchedButtonOutputs();

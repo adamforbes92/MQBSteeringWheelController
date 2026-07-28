@@ -42,11 +42,58 @@ void pollCanRx() {
 
   while (twai_receive(&frame, 0) == ESP_OK) {
     lastCanRxMs = millis();  // record valid frame arrival for CAN health
+
+    // OpenHaldex live-state broadcast: data[6] carries the current mode.
+    // Used to confirm commanded mode changes and to seed "push-to-next".
+    if (frame.identifier == OPENHALDEX_BROADCAST_ID && frame.data_length_code >= 7) {
+      openHaldexCurrentMode = frame.data[6];
+      openHaldexLastRxMs = millis();
+    }
+
     DEBUG_CHASSIS_CAN_("RX length=%u ID=0x%03X data=", frame.data_length_code, frame.identifier);
     for (uint8_t i = 0; i < frame.data_length_code; i++) {
       DEBUG_CHASSIS_CAN_("%02X ", frame.data[i]);
     }
     DEBUG_CHASSIS_CAN("");
+  }
+}
+
+// Send a single OpenHaldex external-control frame requesting the given mode.
+void sendOpenHaldexMode(uint8_t mode) {
+  uint8_t data[8] = {0};
+  data[0] = mode;
+  if (!twaiSendStandardFrame(OPENHALDEX_EXTERNAL_CONTROL_ID, data, sizeof(data))) {
+    DEBUG("OpenHaldex TX Fail!");
+  }
+}
+
+// Closed-loop mode control: resend the target mode until the OpenHaldex
+// broadcast confirms it changed, then stop. Times out to avoid endless
+// retransmission if the OpenHaldex unit is absent or CAN-broadcast disabled.
+void serviceOpenHaldex() {
+  if (openHaldexTargetMode == OPENHALDEX_MODE_UNKNOWN) {
+    return;  // no command active
+  }
+
+  const uint32_t now = millis();
+
+  // Confirmed by a recent broadcast matching the target -> done.
+  if (openHaldexCurrentMode == openHaldexTargetMode &&
+      openHaldexLastRxMs != 0 && (now - openHaldexLastRxMs) < 1000UL) {
+    openHaldexTargetMode = OPENHALDEX_MODE_UNKNOWN;
+    return;
+  }
+
+  // Give up after 3 s so a missing OpenHaldex doesn't spam the bus forever.
+  if ((now - openHaldexCmdStartMs) > 3000UL) {
+    openHaldexTargetMode = OPENHALDEX_MODE_UNKNOWN;
+    return;
+  }
+
+  // Resend at ~10 Hz until confirmed.
+  if (openHaldexLastSendMs == 0 || (now - openHaldexLastSendMs) >= 100UL) {
+    sendOpenHaldexMode(openHaldexTargetMode);
+    openHaldexLastSendMs = now;
   }
 }
 
@@ -61,6 +108,23 @@ void broadcastButtonsCAN() {
     holdActive = true;
   }
   portEXIT_CRITICAL(&stateMux);
+
+  // OR in the bits for any latched buttons so their CAN state persists until
+  // the button is pressed again (unlatched). OpenHaldex buttons are exclusive
+  // and never contribute CAN button bits here.
+  for (size_t i = 0; i < buttonMappingCount; i++) {
+    if (!buttonLatched[i]) {
+      continue;
+    }
+    const ButtonMapping& m = buttonMappings[i];
+    if (m.flags & FLAG_OPENHALDEX_CONTROL) {
+      continue;
+    }
+    if (m.canByteIndex < 8 && m.canBitIndex < 8) {
+      payload[m.canByteIndex] |= static_cast<uint8_t>(1U << m.canBitIndex);
+      holdActive = true;
+    }
+  }
 
   // Always update the display state (dashboard) regardless of whether CAN TX is enabled.
   // The hold-window expiry here is what clears the bits after button release.

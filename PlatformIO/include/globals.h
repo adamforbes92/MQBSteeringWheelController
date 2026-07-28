@@ -50,6 +50,17 @@ extern bool buttonFound;
 extern ButtonMapping buttonMappings[kMaxButtonMappings];
 extern size_t buttonMappingCount;
 
+// Latch state per mapping: toggled on each press when FLAG_LATCH is set.
+// While true, the button's PNP/CAN/LIN/resistive outputs are held active.
+extern volatile bool buttonLatched[kMaxButtonMappings];
+
+// --- OpenHaldex control (closed loop) --------------------------------------
+extern volatile uint8_t  openHaldexCurrentMode; // last mode from 0x6B0 broadcast (0xFF = unknown)
+extern volatile uint32_t openHaldexLastRxMs;    // millis() of last 0x6B0 broadcast
+extern volatile uint8_t  openHaldexTargetMode;  // pending commanded mode (0xFF = no command active)
+extern volatile uint32_t openHaldexCmdStartMs;  // millis() when the command was issued (timeout)
+extern volatile uint32_t openHaldexLastSendMs;  // millis() of last 0x6A0 send (resend cadence)
+
 extern volatile bool canBroadcastEnabled;
 extern volatile uint16_t canBroadcastId;
 extern volatile bool paddlesEnabled;

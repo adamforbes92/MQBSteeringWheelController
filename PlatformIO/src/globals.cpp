@@ -67,6 +67,14 @@ ButtonMapping buttonMappings[kMaxButtonMappings] = {
 };
 size_t buttonMappingCount = 16;
 
+volatile bool buttonLatched[kMaxButtonMappings] = {false};
+
+volatile uint8_t  openHaldexCurrentMode = OPENHALDEX_MODE_UNKNOWN;
+volatile uint32_t openHaldexLastRxMs    = 0;
+volatile uint8_t  openHaldexTargetMode  = OPENHALDEX_MODE_UNKNOWN;
+volatile uint32_t openHaldexCmdStartMs  = 0;
+volatile uint32_t openHaldexLastSendMs  = 0;
+
 volatile uint16_t canBroadcastId = canButtonID;
 volatile bool canBroadcastEnabled = true;
 volatile bool paddlesEnabled = false;

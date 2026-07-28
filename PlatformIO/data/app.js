@@ -6,6 +6,20 @@ let localLearnUntil = 0;
 let localLearnRow = -1;
 let localLearnTarget = 0;
 
+// OpenHaldex mode names, indexed 0-5; 255 = "Push-to-Next".
+const OH_MODE_NAMES = ["Stock", "FWD", "50:50", "60:40", "75:25", "Expert"];
+const OH_MODE_PUSH_NEXT = 255;
+
+function ohModeOptions(selected) {
+  const opts = OH_MODE_NAMES.map(
+    (n, i) => `<option value="${i}"${selected === i ? " selected" : ""}>${n}</option>`
+  );
+  opts.push(
+    `<option value="${OH_MODE_PUSH_NEXT}"${selected === OH_MODE_PUSH_NEXT ? " selected" : ""}>Push-to-Next</option>`
+  );
+  return opts.join("");
+}
+
 function initApp() {
   initTabs();
   wireControls();
@@ -39,6 +53,8 @@ function wireControls() {
       canByteIndex: 255,
       canBitIndex: 0,
       resistiveOhm: 0,
+      flags: 0,
+      openHaldexMode: 0,
     });
     renderMappings();
   });
@@ -229,6 +245,16 @@ async function loadStatus() {
       if (otaEl) otaEl.textContent = fwStr;
     }
 
+    const ohEl = document.getElementById("openHaldexStatus");
+    if (ohEl) {
+      if (s.openHaldexPresent) {
+        const pend = s.openHaldexPending ? " (changing…)" : "";
+        ohEl.textContent = `OpenHaldex mode: ${s.openHaldexModeStr || "--"}${pend}`;
+      } else {
+        ohEl.textContent = "OpenHaldex: not detected";
+      }
+    }
+
     updateLearnBannerFromStatus(s);
   } catch (err) {
     setText("learnBadge", "Learn: Status Error");
@@ -293,17 +319,25 @@ function renderMappings() {
       .map((b) => `<option value="${b}"${byteIdx === b ? " selected" : ""}>${b === 255 ? "\u2014" : b}</option>`)
       .join("");
 
+    // OpenHaldex control is exclusive: when enabled the other output columns
+    // are disabled to make it clear the button only commands a Haldex mode.
+    const ohEnabled = (num(row.flags) & 4) !== 0;
+    const ohMode = (typeof row.openHaldexMode === "number") ? row.openHaldexMode : 0;
+    const exDis = ohEnabled ? " disabled" : "";
+
     tr.innerHTML = `
       <td><input data-field="name" data-idx="${idx}" type="text" value="${escapeAttr(row.name || "")}"></td>
       <td><input data-field="oldButtonId" data-idx="${idx}" type="number" min="0" max="255" value="${num(row.oldButtonId)}"></td>
       <td><button class="btn tiny secondary" data-learn="old" data-idx="${idx}">Learn</button></td>
-      <td><input data-field="newLinButtonId" data-idx="${idx}" type="number" min="0" max="255" value="${num(row.newLinButtonId)}"></td>
-      <td><button class="btn tiny secondary" data-learn="lin" data-idx="${idx}">Learn</button></td>
-      <td><select data-field="canByteIndex" data-idx="${idx}">${byteOptions}</select></td>
-      <td><input data-field="canBitIndex" data-idx="${idx}" type="number" min="0" max="7" value="${bitIdx}"></td>
-      <td><input data-field="resistiveOhm" data-idx="${idx}" type="number" min="0" max="20000" value="${num(row.resistiveOhm)}"></td>
-      <td style="text-align:center"><input data-field="flags" data-subfield="pnp" data-idx="${idx}" type="checkbox" title="Activate PNP output when pressed" ${(num(row.flags) & 1) ? "checked" : ""}></td>
-      <td style="text-align:center"><input data-field="flags" data-subfield="latch" data-idx="${idx}" type="checkbox" title="Latch PNP: press to latch on, press again to unlatch" ${(num(row.flags) & 2) ? "checked" : ""}></td>
+      <td><input data-field="newLinButtonId" data-idx="${idx}" type="number" min="0" max="255" value="${num(row.newLinButtonId)}"${exDis}></td>
+      <td><button class="btn tiny secondary" data-learn="lin" data-idx="${idx}"${exDis}>Learn</button></td>
+      <td><select data-field="canByteIndex" data-idx="${idx}"${exDis}>${byteOptions}</select></td>
+      <td><input data-field="canBitIndex" data-idx="${idx}" type="number" min="0" max="7" value="${bitIdx}"${exDis}></td>
+      <td><input data-field="resistiveOhm" data-idx="${idx}" type="number" min="0" max="20000" value="${num(row.resistiveOhm)}"${exDis}></td>
+      <td style="text-align:center"><input data-field="flags" data-subfield="pnp" data-idx="${idx}" type="checkbox" title="Activate PNP output when pressed" ${(num(row.flags) & 1) ? "checked" : ""}${exDis}></td>
+      <td style="text-align:center"><input data-field="flags" data-subfield="latch" data-idx="${idx}" type="checkbox" title="Latch: press to activate, press again to clear (PNP, CAN and LIN)" ${(num(row.flags) & 2) ? "checked" : ""}${exDis}></td>
+      <td style="text-align:center"><input data-field="flags" data-subfield="openhaldex" data-idx="${idx}" type="checkbox" title="OpenHaldex control (exclusive: overrides PNP/CAN/LIN for this button)" ${ohEnabled ? "checked" : ""}></td>
+      <td><select data-field="openHaldexMode" data-idx="${idx}" title="OpenHaldex mode to set on press"${ohEnabled ? "" : " disabled"}>${ohModeOptions(ohMode)}</select></td>
       <td><button class="btn tiny danger" data-delete="row" data-idx="${idx}">Delete</button></td>
     `;
 
@@ -341,6 +375,16 @@ function onEditRow(event) {
   if (field === "flags" && event.target.dataset.subfield === "latch") {
     const current = num(mappings[idx].flags);
     mappings[idx].flags = event.target.checked ? (current | 2) : (current & ~2);
+    return;
+  }
+  if (field === "flags" && event.target.dataset.subfield === "openhaldex") {
+    const current = num(mappings[idx].flags);
+    mappings[idx].flags = event.target.checked ? (current | 4) : (current & ~4);
+    renderMappings();  // redraw to apply/remove exclusive-mode disabling
+    return;
+  }
+  if (field === "openHaldexMode") {
+    mappings[idx].openHaldexMode = Number(event.target.value);
     return;
   }
 
@@ -407,6 +451,7 @@ async function saveSetup() {
       canBitIndex: clamp(num(m.canBitIndex), 0, 7),
       resistiveOhm: num(m.resistiveOhm),
       flags: num(m.flags),
+      openHaldexMode: (typeof m.openHaldexMode === "number") ? m.openHaldexMode : 0,
     })),
   };
 

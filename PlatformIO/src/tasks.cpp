@@ -207,6 +207,7 @@ static void steeringWheelLinTask(void* parameter) {
     steeringWheelLIN.handler();
     getButtonState();
     sendButtonLINFrame();
+    sendLatchedButtonOutputs();
 
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(linPause));
   }
@@ -217,33 +218,31 @@ static void debounceOutputTask(void* parameter) {
 
   while (1) {
     broadcastButtonsCAN();
+    serviceOpenHaldex();
 
     // PNP output: diagnostic override → latch state → momentary hold.
     {
-      static uint32_t lastLatchTimestamp = 0;
-      static bool pnpLatchState = false;
+      bool pnpActive = diagPnpActive;
 
-      // Rising-edge detection: new timestamp means a new button press event.
-      if (latestLinButtonId != 0 && latestLinButtonTimestamp != lastLatchTimestamp) {
-        lastLatchTimestamp = latestLinButtonTimestamp;
+      // Latched buttons: PNP stays active while the latch is engaged.
+      if (!pnpActive) {
         for (size_t i = 0; i < buttonMappingCount; i++) {
-          if ((buttonMappings[i].flags & FLAG_ACTIVATES_PNP) &&
-              (buttonMappings[i].flags & FLAG_PNP_LATCH) &&
-              buttonMappings[i].oldButtonId == latestLinButtonId) {
-            pnpLatchState = !pnpLatchState;  // toggle on each press
+          if (buttonLatched[i] &&
+              (buttonMappings[i].flags & FLAG_ACTIVATES_PNP) &&
+              !(buttonMappings[i].flags & FLAG_OPENHALDEX_CONTROL)) {
+            pnpActive = true;
             break;
           }
         }
       }
-
-      bool pnpActive = diagPnpActive || pnpLatchState;
 
       // Momentary (non-latch): active while within the hold window.
       if (!pnpActive && latestLinButtonId != 0 &&
           ((uint32_t)millis() - latestLinButtonTimestamp) < (uint32_t)canHoldMs) {
         for (size_t i = 0; i < buttonMappingCount; i++) {
           if ((buttonMappings[i].flags & FLAG_ACTIVATES_PNP) &&
-              !(buttonMappings[i].flags & FLAG_PNP_LATCH) &&
+              !(buttonMappings[i].flags & FLAG_LATCH) &&
+              !(buttonMappings[i].flags & FLAG_OPENHALDEX_CONTROL) &&
               buttonMappings[i].oldButtonId == latestLinButtonId) {
             pnpActive = true;
             break;
