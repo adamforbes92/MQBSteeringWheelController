@@ -193,6 +193,20 @@ static void steeringWheelLinTask(void* parameter) {
   TickType_t lastWakeTime = xTaskGetTickCount();
 
   while (1) {
+    // Diagnostic LIN ID scan / live watch — owns both buses while it runs.
+    if (linScanRequested) {
+      linScanRequested = false;
+      runLinScan();
+      linScanWatchActive = true;
+      linScanWatchUntil = (uint32_t)millis() + 120000UL;  // auto-stop after 2 min
+    } else if (linScanWatchActive) {
+      if ((int32_t)((uint32_t)millis() - linScanWatchUntil) >= 0) {
+        linScanWatchActive = false;
+      } else {
+        refreshLinScanLiveData();
+      }
+    }
+
     // --- Light frame (0x0D) ---
     // In LIN mode: read brightness from chassis bus, then forward to steering wheel.
     // In AUX/FORCED mode: skip the chassis read to avoid unnecessary blocking.
@@ -206,6 +220,16 @@ static void steeringWheelLinTask(void* parameter) {
     // --- Button frame (0x0E) — wheel sends, chassis listens ---
     steeringWheelLIN.handler();
     getButtonState();
+    if (linAccInId != 0) {
+      getAccButtonState();  // acc buttons merge into the same output pipeline
+    }
+    // Temperature is informational only — poll ~once per second to avoid adding
+    // a per-cycle blocking transaction that would slow button response.
+    static uint8_t tempPollDivider = 0;
+    if (linTempInId != 0 && ++tempPollDivider >= 10) {
+      tempPollDivider = 0;
+      getTemperatureState();
+    }
     sendButtonLINFrame();
     sendLatchedButtonOutputs();
 

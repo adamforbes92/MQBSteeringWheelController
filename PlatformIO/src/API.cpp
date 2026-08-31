@@ -70,6 +70,8 @@ void setupApiServer() {
     doc["outgoingLinData"] = frameToHex(lastLinOutFrame, lastLinOutLen);
     doc["outgoingCanId"] = lastCanOutId;
     doc["outgoingCanData"] = frameToHex(lastCanOutFrame, lastCanOutLen);
+    doc["incomingAccData"] = frameToHex(lastAccInFrame, lastAccInLen);
+    doc["incomingTempData"] = frameToHex(lastTempInFrame, lastTempInLen);
     doc["latestButtonId"] = latestLinButtonId;
     doc["buttonIncoming"] = buttonIncoming;
     doc["buttonOutgoing"] = buttonOutgoing;
@@ -179,6 +181,11 @@ void setupApiServer() {
     doc["linOutputEnabled"] = linOutputEnabled;
     doc["linOutputId"] = linOutputId;
     doc["digipot20kEnabled"] = digipot20kEnabled;
+    doc["linLegacyPins"] = linLegacyPins;
+    doc["linButtonInId"] = linButtonInId;
+    doc["linLightInId"] = linLightInId;
+    doc["linTempInId"] = linTempInId;
+    doc["linAccInId"] = linAccInId;
 
     JsonArray mappings = doc["mappings"].to<JsonArray>();
     for (size_t i = 0; i < buttonMappingCount; i++) {
@@ -240,6 +247,11 @@ void setupApiServer() {
         linOutputEnabled = doc["linOutputEnabled"] | (bool)linOutputEnabled;
         linOutputId      = doc["linOutputId"]      | (uint8_t)linOutputId;
         digipot20kEnabled = doc["digipot20kEnabled"] | (bool)digipot20kEnabled;
+        linLegacyPins    = doc["linLegacyPins"]    | (bool)linLegacyPins;
+        linButtonInId    = doc["linButtonInId"]    | (uint8_t)linButtonInId;
+        linLightInId     = doc["linLightInId"]     | (uint8_t)linLightInId;
+        linTempInId      = doc["linTempInId"]      | (uint8_t)linTempInId;
+        linAccInId       = doc["linAccInId"]       | (uint8_t)linAccInId;
 
         if (auxBrightDutyPct10 <= auxDimDutyPct10) {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"bright duty must be greater than dim duty\"}");
@@ -454,6 +466,82 @@ void setupApiServer() {
         serializeJson(res, payload);
         request->send(200, "application/json", payload);
       });
+
+  // ----- LIN diagnostic log -----
+  // `since` = last seen writeIndex; only newer entries are returned.
+  server.on("/api/log", HTTP_GET, [](AsyncWebServerRequest* req) {
+    uint32_t since = 0;
+    if (req->hasParam("since")) {
+      since = strtoul(req->getParam("since")->value().c_str(), nullptr, 10);
+    }
+    const uint32_t writeIdx = logWriteIndex;
+    uint32_t start = since;
+    if (writeIdx > kLogLineCount && start < writeIdx - kLogLineCount) {
+      start = writeIdx - kLogLineCount;
+    }
+    if (start > writeIdx) start = writeIdx;
+
+    JsonDocument doc;
+    doc["writeIndex"] = writeIdx;
+    JsonArray arr = doc["entries"].to<JsonArray>();
+    for (uint32_t i = start; i < writeIdx; i++) {
+      const LogEntry& e = logBuffer[i % kLogLineCount];
+      JsonObject row = arr.add<JsonObject>();
+      row["i"] = i;
+      row["ms"] = e.ms;
+      row["t"] = e.text;
+    }
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
+
+  server.on("/api/log/clear", HTTP_POST, [](AsyncWebServerRequest* req) {
+    portENTER_CRITICAL(&stateMux);
+    logWriteIndex = 0;
+    memset(logBuffer, 0, sizeof(logBuffer));
+    portEXIT_CRITICAL(&stateMux);
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  // ----- LIN ID scanner -----
+  // Request a scan of both buses; the LIN task performs it and enables watch.
+  server.on("/api/lin/scan", HTTP_POST, [](AsyncWebServerRequest* req) {
+    linScanRequested = true;
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/api/lin/scan/stop", HTTP_POST, [](AsyncWebServerRequest* req) {
+    linScanWatchActive = false;
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/api/lin/scan/results", HTTP_GET, [](AsyncWebServerRequest* req) {
+    JsonDocument doc;
+    doc["scanActive"] = linScanActive;
+    doc["scanDoneMs"] = linScanDoneMs;
+    doc["watchActive"] = linScanWatchActive;
+    doc["buttonInId"] = linButtonInId;
+    doc["accInId"] = linAccInId;
+    JsonArray arr = doc["responders"].to<JsonArray>();
+
+    portENTER_CRITICAL(&stateMux);
+    const size_t n = linScanResultCount;
+    for (size_t i = 0; i < n && i < kMaxLinScanResults; i++) {
+      JsonObject row = arr.add<JsonObject>();
+      row["bus"] = linScanResults[i].bus;
+      row["id"] = linScanResults[i].id;
+      JsonArray d = row["data"].to<JsonArray>();
+      for (uint8_t b = 0; b < 8; b++) {
+        d.add(linScanResults[i].data[b]);
+      }
+    }
+    portEXIT_CRITICAL(&stateMux);
+
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json", out);
+  });
 
   server.on(
       "/api/ota", HTTP_POST,

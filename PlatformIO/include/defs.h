@@ -13,7 +13,7 @@
 
 #include "ver.h"
 
-#define FW_VERSION "1.01"
+#define FW_VERSION "1.02"
 
 #define enableDebug 0
 #define debugIO 0

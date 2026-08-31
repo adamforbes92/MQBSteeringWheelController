@@ -26,6 +26,8 @@ function initApp() {
   loadSetup();
   loadStatus();
   pollTimer = setInterval(loadStatus, 200);
+  setInterval(pollLog, 750);
+  setInterval(pollScan, 500);
 }
 
 function initTabs() {
@@ -77,7 +79,7 @@ function wireControls() {
   wireExclusive("forceBacklight", "hasAuxLight");
 
   // Other auto-save toggles (no mutual exclusion).
-  ["canBroadcastEnabled", "paddlesEnabled", "linOutputEnabled", "digipot20kEnabled"].forEach((id) => {
+  ["canBroadcastEnabled", "paddlesEnabled", "linOutputEnabled", "digipot20kEnabled", "linLegacyPins"].forEach((id) => {
     document.getElementById(id).addEventListener("change", saveSetup);
   });
 
@@ -133,6 +135,23 @@ function wireControls() {
   document.getElementById("testResistanceEnabled").addEventListener("change", () => sendTestResistance(0));
   document.getElementById("testResistanceUpBtn").addEventListener("click", () => sendTestResistance(1));
   document.getElementById("testResistanceDownBtn").addEventListener("click", () => sendTestResistance(-1));
+
+  // Diagnostic: LIN monitor clear.
+  const logClearBtn = document.getElementById("logClearBtn");
+  if (logClearBtn) {
+    logClearBtn.addEventListener("click", async () => {
+      await fetch("/api/log/clear", { method: "POST" });
+      const view = document.getElementById("logView");
+      if (view) view.textContent = "";
+      logSince = 0;
+    });
+  }
+
+  // Diagnostic: LIN ID scanner.
+  const linScanBtn = document.getElementById("linScanBtn");
+  if (linScanBtn) {
+    linScanBtn.addEventListener("click", startScan);
+  }
 }
 
 async function loadSetup() {
@@ -155,6 +174,11 @@ async function loadSetup() {
     document.getElementById("linOutputEnabled").checked = !!setup.linOutputEnabled;
     document.getElementById("linOutputId").value = hex2(setup.linOutputId != null ? setup.linOutputId : 0x0E);
     document.getElementById("digipot20kEnabled").checked = !!setup.digipot20kEnabled;
+    document.getElementById("linLegacyPins").checked = !!setup.linLegacyPins;
+    document.getElementById("linButtonInId").value = hex2(setup.linButtonInId != null ? setup.linButtonInId : 0x0E);
+    document.getElementById("linAccInId").value = hex2(setup.linAccInId != null ? setup.linAccInId : 0x0F);
+    document.getElementById("linTempInId").value = hex2(setup.linTempInId != null ? setup.linTempInId : 0x3A);
+    document.getElementById("linLightInId").value = hex2(setup.linLightInId != null ? setup.linLightInId : 0x0D);
     document.getElementById("auxDimDuty").value    = Number((setup.auxDimDuty    != null ? setup.auxDimDuty    : 197) / 10).toFixed(1);
     document.getElementById("auxBrightDuty").value = Number((setup.auxBrightDuty != null ? setup.auxBrightDuty : 980) / 10).toFixed(1);
 
@@ -441,6 +465,11 @@ async function saveSetup() {
     linOutputEnabled: document.getElementById("linOutputEnabled").checked,
     linOutputId: parseInt(document.getElementById("linOutputId").value, 16) || 0x0E,
     digipot20kEnabled: document.getElementById("digipot20kEnabled").checked,
+    linLegacyPins: document.getElementById("linLegacyPins").checked,
+    linButtonInId: parseHexByte("linButtonInId", 0x0E),
+    linAccInId: parseHexByte("linAccInId", 0x0F),
+    linTempInId: parseHexByte("linTempInId", 0x3A),
+    linLightInId: parseHexByte("linLightInId", 0x0D),
     auxDimDuty:    Math.round(parseFloat(document.getElementById("auxDimDuty").value) * 10) || 197,
     auxBrightDuty: Math.round(parseFloat(document.getElementById("auxBrightDuty").value) * 10) || 980,
     mappings: mappings.map((m) => ({
@@ -601,4 +630,106 @@ function escapeAttr(str) {
     .replaceAll('"', "&quot;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function parseHexByte(id, dflt) {
+  const el = document.getElementById(id);
+  const s = el ? el.value.trim() : "";
+  if (s === "") return dflt;
+  const n = parseInt(s, 16);
+  return Number.isFinite(n) ? (n & 0xFF) : dflt;
+}
+
+// ---------- LIN monitor log ----------
+let logSince = 0;
+
+async function pollLog() {
+  try {
+    const r = await (await fetch("/api/log?since=" + logSince)).json();
+    if (!r) return;
+    if (!Array.isArray(r.entries) || r.entries.length === 0) {
+      logSince = r.writeIndex != null ? r.writeIndex : logSince;
+      return;
+    }
+    const view = document.getElementById("logView");
+    if (!view) { logSince = r.writeIndex; return; }
+    const auto = document.getElementById("logAutoScroll");
+    const lines = r.entries.map((e) => {
+      const ts = (e.ms / 1000).toFixed(3).padStart(10, " ");
+      return `[${ts}] ${e.t}`;
+    });
+    view.textContent += (view.textContent ? "\n" : "") + lines.join("\n");
+    if (view.textContent.length > 50000) {
+      view.textContent = view.textContent.slice(-40000);
+    }
+    if (auto && auto.checked) view.scrollTop = view.scrollHeight;
+    logSince = r.writeIndex;
+  } catch (e) {}
+}
+
+// ---------- LIN ID scanner / discovery ----------
+let scanPrevData = {};
+
+async function startScan() {
+  scanPrevData = {};
+  setText("linScanStatus", "Scanning\u2026");
+  try {
+    await fetch("/api/lin/scan", { method: "POST" });
+  } catch (e) {
+    setText("linScanStatus", "Scan request failed.");
+  }
+}
+
+async function pollScan() {
+  const tbody = document.getElementById("linScanRows");
+  if (!tbody) return;  // only present on the diagnostics tab
+  try {
+    const r = await (await fetch("/api/lin/scan/results")).json();
+    if (!r) return;
+    setText("linScanStatus",
+      r.scanActive ? "Scanning\u2026"
+      : r.watchActive ? "Watching \u2014 press a button on the wheel"
+      : r.scanDoneMs ? "Scan complete"
+      : "Idle");
+    renderScanRows(r);
+  } catch (e) {}
+}
+
+function renderScanRows(r) {
+  const tbody = document.getElementById("linScanRows");
+  if (!tbody) return;
+  const responders = Array.isArray(r.responders) ? r.responders : [];
+  tbody.innerHTML = responders.map((row) => {
+    const key = `${row.bus}-${row.id}`;
+    const dataStr = (row.data || []).map((b) => hex2(b)).join(" ");
+    const changed = scanPrevData[key] !== undefined && scanPrevData[key] !== dataStr;
+    scanPrevData[key] = dataStr;
+    const busName = row.bus === 2 ? "Chassis" : "Wheel";
+    const tag = r.buttonInId === row.id ? " (btn)" : r.accInId === row.id ? " (acc)" : "";
+    return `<tr class="${changed ? "scan-changed" : ""}">`
+      + `<td>${busName}</td>`
+      + `<td>0x${hex2(row.id)}${tag}</td>`
+      + `<td class="mono">${dataStr}</td>`
+      + `<td>`
+      +   `<button class="btn tiny secondary" data-assign="button" data-id="${row.id}">Button</button> `
+      +   `<button class="btn tiny secondary" data-assign="acc" data-id="${row.id}">Acc</button>`
+      + `</td></tr>`;
+  }).join("");
+
+  tbody.querySelectorAll("button[data-assign]").forEach((b) => {
+    b.addEventListener("click", onAssignScan);
+  });
+}
+
+async function onAssignScan(event) {
+  const id = Number(event.target.dataset.id);
+  const kind = event.target.dataset.assign;
+  if (kind === "button") {
+    document.getElementById("linButtonInId").value = hex2(id);
+  } else {
+    document.getElementById("linAccInId").value = hex2(id);
+  }
+  await saveSetup();
+  try { await fetch("/api/lin/scan/stop", { method: "POST" }); } catch (e) {}
+  setText("linScanStatus", `Assigned 0x${hex2(id)} as ${kind === "button" ? "Button" : "Accessory"} ID.`);
 }

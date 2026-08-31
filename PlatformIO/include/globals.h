@@ -74,6 +74,16 @@ extern volatile uint8_t linOutputId;  // LIN frame ID for chassis LIN button out
 extern uint8_t canHoldFrame[8];        // CAN payload held during the window (stateMux protected)
 extern volatile uint32_t canHoldUntil; // millis() deadline; 0 = inactive
 
+// Legacy PCB support: reverses RX/TX on both LIN channels. Applied at boot only.
+extern volatile bool linLegacyPins;
+
+// Configurable incoming LIN frame IDs (polled as master). Default to the
+// constants in defs.h; overridable so wheels using other IDs are supported.
+extern volatile uint8_t linButtonInId; // steering-wheel button frame
+extern volatile uint8_t linLightInId;  // chassis light/brightness frame
+extern volatile uint8_t linTempInId;   // steering-wheel temperature frame
+extern volatile uint8_t linAccInId;    // steering-wheel accessory-button frame
+
 extern volatile uint8_t latestLinButtonId;
 extern volatile uint32_t latestLinButtonTimestamp;
 
@@ -86,6 +96,12 @@ extern uint8_t lastCanOutLen;
 extern uint32_t lastLinInId;
 extern uint32_t lastLinOutId;
 extern uint32_t lastCanOutId;
+
+// Latest accessory-button and temperature frames (for the LIN monitor/status).
+extern uint8_t lastAccInFrame[8];
+extern uint8_t lastTempInFrame[8];
+extern uint8_t lastAccInLen;
+extern uint8_t lastTempInLen;
 
 extern volatile bool learnActive;
 extern volatile uint8_t learnTarget;
@@ -101,6 +117,45 @@ extern SemaphoreHandle_t chassisLinMutex;
 extern volatile uint32_t swLinLastOkMs;      // steering-wheel LIN (LIN 1)
 extern volatile uint32_t chassisLinLastOkMs; // chassis LIN (LIN 2)
 extern volatile uint32_t lastCanRxMs;        // last valid CAN frame received (CAN)
+
+// ---------------------------------------------------------------------------
+// Diagnostic log — fixed-size line ring buffer. Producers call logLine();
+// the /api/log consumer walks writeIndex.
+// ---------------------------------------------------------------------------
+constexpr size_t kLogLineLen   = 96;
+constexpr size_t kLogLineCount = 64;
+
+struct LogEntry {
+  uint32_t ms;
+  char     text[kLogLineLen];
+};
+
+extern LogEntry          logBuffer[kLogLineCount];
+extern volatile uint32_t logWriteIndex;  // monotonically increasing
+
+void logLine(const char* fmt, ...);
+
+// ---------------------------------------------------------------------------
+// LIN ID scanner — enumerates protected IDs 0x00..0x3F on both buses and
+// records which respond. Driven from the steering-wheel LIN task.
+// ---------------------------------------------------------------------------
+struct LinScanResult {
+  uint8_t bus;        // 1 = steering wheel (LIN 1), 2 = chassis (LIN 2)
+  uint8_t id;         // protected frame ID (0x00..0x3F)
+  uint8_t len;        // response length captured
+  uint8_t data[8];    // last response bytes
+  bool    responded;  // true if a clean response was received
+};
+
+constexpr size_t kMaxLinScanResults = 128;  // 64 IDs x 2 buses
+
+extern volatile bool     linScanRequested;  // set by API, cleared by task
+extern volatile bool     linScanActive;     // true while a scan is running
+extern volatile uint32_t linScanDoneMs;     // millis() of last completed scan
+extern LinScanResult     linScanResults[kMaxLinScanResults];
+extern volatile size_t   linScanResultCount;
+extern volatile bool     linScanWatchActive; // re-poll responders live for discovery
+extern volatile uint32_t linScanWatchUntil;  // millis() deadline; auto-stops watch
 
 void loadPreferences();
 void savePreferences();

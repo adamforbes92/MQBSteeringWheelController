@@ -123,6 +123,12 @@ void basicInit() {
   DEBUG("LIN Initialising...");
   steeringWheelLIN.begin(linBaud);
   chassisLIN.begin(linBaud);
+  if (linLegacyPins) {
+    // Legacy PCB routes RX/TX reversed on both LIN channels. The library only
+    // applies pins during begin(); re-open the UARTs to remap the pin matrix.
+    Serial1.begin(linBaud, SERIAL_8N1, pinTX_LINSteeringWheel, pinRX_LINSteeringWheel);
+    Serial2.begin(linBaud, SERIAL_8N1, pinTX_LINchassis, pinRX_LINchassis);
+  }
   DEBUG("LIN Initialised!");
 
   DEBUG("CAN/TWAI Initialising...");

@@ -471,3 +471,25 @@ select {
     font-size: 0.6rem;
   }
 }
+
+.log-view {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  height: 18rem;
+  overflow: auto;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+tr.scan-changed td {
+  background: #3A3A1A;
+  color: var(--warning);
+}
+
