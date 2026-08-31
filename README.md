@@ -25,14 +25,22 @@ library for the LIN state machines, the ESP32 **TWAI** peripheral for CAN, and
 
 | Feature | Detail |
 |---|---|
-| LIN input (wheel) | Polls the steering-wheel LIN bus (ID `0x0E`) for button IDs and paddle state at 19.2 kbit/s |
-| LIN light input | Reads chassis-bus dimming (ID `0x0D`) to drive the wheel backlight |
+| LIN input (wheel) | Polls the steering-wheel LIN bus (default ID `0x0E`) for button IDs and paddle state at 19.2 kbit/s |
+| LIN light input | Reads chassis-bus dimming (default ID `0x0D`) to drive the wheel backlight |
+| Accessory buttons | Polls a second wheel frame (default ID `0x0F`) and feeds its buttons through the same mapping pipeline |
+| Temperature frame | Polls a wheel temperature frame (default ID `0x3A`) for display in the LIN monitor |
+| Configurable LIN IDs | All four incoming frame IDs are user-editable, so wheels using non-standard IDs are supported |
+| LIN ID discovery | A two-bus scanner (0x00–0x3F) that finds responding frames and highlights the one that changes when a button is pressed — assign it in one click |
+| LIN monitor | A live event log of button, accessory and scan activity, viewable and clearable from the UI |
+| Legacy PCB mode | Reverses RX/TX on **both** LIN channels for older boards (applied at boot) |
 | Button re-mapping | Up to **24** mappings, each with a name, original ID, new LIN ID, CAN bit, resistance and flags |
 | LIN output | Sends the translated button as a LIN master request on the chassis bus (configurable ID) |
 | CAN output | Broadcasts an 8-byte button frame (configurable ID, default `0x1E0`) on 500 kbit/s TWAI |
 | Paddle via CAN | Emits a GRA (cruise/shift) frame (`0x38A`) carrying paddle up/down |
 | Resistive output | Drives an X9C10X digital pot to emulate a resistor-ladder radio input (per button specified ohms) |
 | High-side driver | Switchable output (up to 5A) — momentary or latched per button, plus diagnostic override |
+| Latching outputs | Latch a button to hold its high-side, CAN and LIN outputs active until it is pressed again |
+| OpenHaldex control | Command an **OpenHaldex** mode from a button — a fixed mode or **Push-to-Next**, with closed-loop confirmation over CAN |
 | Aux backlight | PWM light input decoded to a brightness %, with learnable dim/bright duty calibration |
 | Forced / source-select backlight | Choose Aux PWM, forced fixed %, or pass-through LIN brightness |
 | Learn mode | Capture a wheel's button IDs and aux duty limits directly from the live bus |
@@ -40,7 +48,7 @@ library for the LIN state machines, the ESP32 **TWAI** peripheral for CAN, and
 | OTA updates | Flash new firmware from the browser over Wi-Fi |
 | Bus health | Live CAN / LIN 1 / LIN 2 / resistive status in the UI |
 | Power management | Auto Wi-Fi-off + CPU reduction 1 min after the last client disconnects |
-| EEPROM | All settings and the button map stored to ESP32 Preferences (NVS) |
+| EEPROM | All settings and the button map stored to ESP32 Preferences |
 
 ---
 
@@ -53,7 +61,9 @@ Designed for VAG multi-function steering wheels that report buttons over a **LIN
 response** and (optionally) carry paddle shifters and a LIN-dimmed backlight. Button IDs,
 LIN frame IDs and the CAN/GRA frame set are **car- and wheel-specific** — treat the
 shipped `buttonMappings[]` table (in [src/globals.cpp](src/globals.cpp)) as a known-good
-baseline and re-learn each button to suit your hardware.
+baseline and re-learn each button to suit your hardware. If your wheel's buttons aren't
+recognised at all, its frames are likely on different LIN IDs — use the **Discover LIN IDs**
+scanner (see below) to find and assign them.
 
 > Frame IDs and calibration live in [include/defs.h](include/defs.h) and
 > [src/globals.cpp](src/globals.cpp). The resistive output values are tuned to your
@@ -176,10 +186,25 @@ Each of the up to 24 rows in the button map carries:
 | **CAN Byte / Bit** | Which bit of the 8-byte CAN frame to set (byte `0xFF`/255 = no CAN) |
 | **Resistive Output (Ohm)** | Resistance to present on the X9C10X while held (0 = none) |
 | **PNP** | Flag: drive the high-side output while pressed |
-| **Latch** | Flag: toggle the high-side output on each press instead of momentary |
+| **Latch** | Flag: toggle the button on/off on each press instead of momentary. While latched, its high-side, CAN and LIN outputs stay active until pressed again |
+| **OpenHaldex** | Flag: this button commands an OpenHaldex mode change (**exclusive** — its PNP/CAN/LIN/resistive outputs are suppressed) |
+| **OH Mode** | The OpenHaldex mode to set: a fixed mode (Stock, FWD, 50:50, 60:40, 75:25, Expert) or **Push-to-Next** to step through the modes and roll over |
 
 When a mapped button is seen, its CAN bit is held for the configurable **Send on CAN**
 window (`canHoldMs`, 50–5000 ms) so brief presses still produce a clean pulse.
+
+### OpenHaldex Control
+
+A button flagged for **OpenHaldex** commands a mode change on an **OpenHaldex**
+unit sharing the chassis CAN bus.
+The controller sends the requested mode on the external-control frame (`0x6A0`, `data[0]`
+= mode) and then watches the OpenHaldex broadcast (`0x6B0`, `data[6]` = current mode) to
+confirm it took effect, resending until the reported mode matches (or a 3-second timeout).
+**Push-to-Next** advances one mode per press using the last broadcast mode as its
+reference, rolling over after Expert. The Buttons tab shows the live OpenHaldex mode.
+
+> The OpenHaldex unit must have its **broadcast-over-CAN** option enabled — it is required
+> both to accept external mode commands and to provide the confirmation broadcast.
 
 ### Backlight Sources
 
@@ -203,9 +228,9 @@ Connect to the **`MFSWController`** Wi-Fi access point and browse to
 | Tab | Purpose |
 | --- | --- |
 | **Dashboard** | Live active button (LIN ID + resolved name), CAN output frame with per-bit view, backlight source/state/brightness, and raw incoming/outgoing LIN + CAN frames |
-| **Setup** | Broadcast-over-CAN toggle + CAN ID, Paddle via CAN, Send-on-CAN window, aux-light source, force backlight + brightness slider, LIN output enable + ID, and aux dim/bright duty calibration with **Learn** buttons |
-| **Buttons** | The button builder table — add/delete up to 24 rows, edit every field, and **Learn** original/new LIN IDs directly from the wheel |
-| **Diagnostics** | Bus health (CAN / LIN 1 / LIN 2 / resistive), high-side driver test toggle, resistive-output hold, and a stepped Test Resistance probe |
+| **Setup** | Broadcast-over-CAN toggle + CAN ID, Paddle via CAN, Send-on-CAN window, aux-light source, force backlight + brightness slider, LIN output enable + ID, **Legacy PCB (swap LIN RX/TX)**, the four **incoming LIN IDs** (button / accessory / temperature / light), and aux dim/bright duty calibration with **Learn** buttons |
+| **Buttons** | The button builder table — add/delete up to 24 rows, edit every field, **Learn** original/new LIN IDs directly from the wheel, and assign latch or OpenHaldex control per button (with a live OpenHaldex mode readout) |
+| **Diagnostics** | Bus health (CAN / LIN 1 / LIN 2 / resistive), high-side driver test toggle, resistive-output hold, a stepped Test Resistance probe, the **Discover LIN IDs** scanner, and a live **LIN Monitor** log |
 | **OTA** | Upload a firmware `.bin` over Wi-Fi and reboot |
 
 ---
@@ -219,6 +244,60 @@ Learn mode captures live values from the bus into a specific field:
   out after 5 seconds.
 - **Aux duty limits** — with a PWM light signal present, *Learn Dim* / *Learn Bright*
   capture the current duty (in tenths of a percent) as the calibration endpoints.
+
+---
+
+## Incoming LIN IDs & Discovery
+
+The controller acts as the **LIN master**: it sends a frame header for a specific
+protected ID and the wheel (the slave) answers. It therefore only "hears" a wheel that
+responds on the IDs it polls. Different wheels and gateways use different IDs, so all four
+incoming IDs are user-configurable from the **Setup** tab:
+
+| Frame | Setting | Default |
+| --- | --- | --- |
+| Button | `Button ID_LIN in` | `0x0E` |
+| Accessory buttons | `Accessory ID_LIN in` | `0x0F` |
+| Temperature | `Temperature ID_LIN in` | `0x3A` |
+| Light / dimming | `Light ID_LIN in` | `0x0D` |
+
+The button and accessory frames feed the same mapping pipeline, so accessory buttons behave
+exactly like the main buttons. The temperature frame is captured for the monitor only.
+Setting an ID to `00` disables polling of that frame.
+
+### Discover LIN IDs
+
+If a wheel's buttons aren't recognised, its frames are probably on IDs the controller isn't
+polling. The **Discover LIN IDs** tool in **Diagnostics** finds them:
+
+1. Press **Scan LIN Buses**. The controller sweeps every protected ID (`0x00`–`0x3F`) on
+   **both** the steering-wheel (LIN 1) and chassis (LIN 2) buses and lists every ID that
+   responds, with its live data bytes.
+2. With the results shown, **press a button on the wheel**. The row whose data changes is
+   highlighted — that is the button (or accessory) frame.
+3. Click **Button** or **Acc** on that row to assign the ID; the setting is saved
+   immediately and polling switches to the new ID.
+
+While the results are shown the responding IDs are re-polled live, so button presses show
+up as changing bytes in real time.
+
+---
+
+## LIN Monitor
+
+The **LIN Monitor** card on the **Diagnostics** tab shows a rolling event log fed by the
+firmware — button and accessory presses (tagged `[SW]`), scan progress (`[SCAN]`) and other
+LIN activity, each with a millisecond timestamp. Use **Auto-scroll** to follow the tail and
+**Clear** to reset the buffer. 
+
+---
+
+## Legacy PCB Support
+
+Early boards route the LIN transceivers with **RX and TX reversed** on both channels. Enable
+**Legacy PCB (swap LIN RX/TX)** on the **Setup** tab to flip both LIN 1 and LIN 2 back to the
+correct orientation. The pins are configured once at start-up, so a **reboot is required**
+for the change to take effect. Leave it off for current boards.
 
 ---
 
@@ -272,6 +351,11 @@ web UI header badge and on the OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.02 — Configurable incoming LIN IDs (button/accessory/temperature/light) with a
+        two-bus LIN ID scanner to discover them; accessory + temperature frame
+        polling; live LIN monitor log; Legacy PCB RX/TX swap option
+V1.01 — Latch extended to CAN + LIN outputs; OpenHaldex mode control per button
+        (fixed or Push-to-Next) with closed-loop CAN confirmation
 V1.00 — initial release
 ```
 
