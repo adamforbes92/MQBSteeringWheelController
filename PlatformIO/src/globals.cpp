@@ -1,7 +1,5 @@
 #include "globals.h"
 
-#include <stdarg.h>
-
 LIN_Master_HardwareSerial_ESP32 steeringWheelLIN(Serial1, pinRX_LINSteeringWheel, pinTX_LINSteeringWheel, "LIN_SteeringWheel");
 LIN_Master_HardwareSerial_ESP32 chassisLIN(Serial2, pinRX_LINchassis, pinTX_LINchassis, "LIN_chassis");
 
@@ -66,8 +64,10 @@ ButtonMapping buttonMappings[kMaxButtonMappings] = {
     {"Voice/Mic ACC2",     0x42, 0x0C, 1,    5, 0},   // no CAN output
     {"Paddle +",  0x1E, 0x00, 1,    6, 0},   // no CAN output
     {"Paddle -", 0x1F, 0x00, 1,    7, 0},   // no CAN output
+    {"Paddles (both)", 0x03, 0x00, 0xFF, 0, 0, 0, 0, 6},   // byte 6 = up+down pressed together
+    {"Horn",           0x01, 0x00, 0xFF, 0, 0, 0, 0, 7},   // byte 7 = horn line grounded
 };
-size_t buttonMappingCount = 16;
+size_t buttonMappingCount = 18;
 
 volatile bool buttonLatched[kMaxButtonMappings] = {false};
 
@@ -90,13 +90,6 @@ volatile uint8_t linOutputId = linButtonID;
 uint8_t canHoldFrame[8] = {0};
 volatile uint32_t canHoldUntil = 0;
 
-volatile bool linLegacyPins = false;
-
-volatile uint8_t linButtonInId = linButtonID;
-volatile uint8_t linLightInId  = linLightID;
-volatile uint8_t linTempInId   = linTemperatureID;
-volatile uint8_t linAccInId    = linAccButtonsID;
-
 volatile uint8_t latestLinButtonId = 0;
 volatile uint32_t latestLinButtonTimestamp = 0;
 
@@ -110,11 +103,6 @@ uint32_t lastLinInId = linButtonID;
 uint32_t lastLinOutId = linButtonID;
 uint32_t lastCanOutId = canButtonID;
 
-uint8_t lastAccInFrame[8] = {0};
-uint8_t lastTempInFrame[8] = {0};
-uint8_t lastAccInLen = 0;
-uint8_t lastTempInLen = 0;
-
 volatile bool learnActive = false;
 volatile uint8_t learnTarget = LEARN_NONE;
 volatile uint8_t learnRowIndex = 0;
@@ -123,33 +111,6 @@ volatile uint32_t learnStartTimestamp = 0;
 portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t steeringWheelLinMutex = nullptr;
 SemaphoreHandle_t chassisLinMutex = nullptr;
-
-LogEntry          logBuffer[kLogLineCount] = {};
-volatile uint32_t logWriteIndex           = 0;
-static portMUX_TYPE logMux                = portMUX_INITIALIZER_UNLOCKED;
-
-void logLine(const char* fmt, ...) {
-  char tmp[kLogLineLen];
-  va_list ap;
-  va_start(ap, fmt);
-  vsnprintf(tmp, sizeof(tmp), fmt, ap);
-  va_end(ap);
-
-  portENTER_CRITICAL(&logMux);
-  const uint32_t i = logWriteIndex % kLogLineCount;
-  logBuffer[i].ms = millis();
-  strlcpy(logBuffer[i].text, tmp, sizeof(logBuffer[i].text));
-  logWriteIndex++;
-  portEXIT_CRITICAL(&logMux);
-}
-
-volatile bool     linScanRequested = false;
-volatile bool     linScanActive    = false;
-volatile uint32_t linScanDoneMs    = 0;
-LinScanResult     linScanResults[kMaxLinScanResults] = {};
-volatile size_t   linScanResultCount = 0;
-volatile bool     linScanWatchActive = false;
-volatile uint32_t linScanWatchUntil  = 0;
 
 void loadPreferences() {
   size_t mapCount = preferences.getUInt("mapCount", buttonMappingCount);
@@ -160,6 +121,21 @@ void loadPreferences() {
     if (bytesExpected > 0 && bytesStored >= bytesExpected) {
       preferences.getBytes("mapBlob", buttonMappings, bytesExpected);
       buttonMappingCount = mapCount;
+    }
+  }
+  // Migration: maps saved before these rows existed won't contain them, so
+  // append any missing built-ins without disturbing learned entries.
+  static const ButtonMapping kSpecialRows[] = {
+    {"Paddles (both)", 0x03, 0x00, 0xFF, 0, 0, 0, 0, 6},
+    {"Horn",           0x01, 0x00, 0xFF, 0, 0, 0, 0, 7},
+  };
+  for (const ButtonMapping& row : kSpecialRows) {
+    bool present = false;
+    for (size_t i = 0; i < buttonMappingCount; i++) {
+      if (strcmp(buttonMappings[i].name, row.name) == 0) { present = true; break; }
+    }
+    if (!present && buttonMappingCount < kMaxButtonMappings) {
+      buttonMappings[buttonMappingCount++] = row;
     }
   }
   canBroadcastEnabled   = preferences.getBool("canBc",        canBroadcastEnabled);
@@ -173,11 +149,6 @@ void loadPreferences() {
   canHoldMs             = preferences.getUShort("canHoldMs",  canHoldMs);
   linOutputEnabled      = preferences.getBool("linOut",       linOutputEnabled);
   linOutputId           = preferences.getUChar("linOutId",    linOutputId);
-  linLegacyPins         = preferences.getBool("linLegacy",    linLegacyPins);
-  linButtonInId         = preferences.getUChar("linBtnIn",    linButtonInId);
-  linLightInId          = preferences.getUChar("linLgtIn",    linLightInId);
-  linTempInId           = preferences.getUChar("linTmpIn",    linTempInId);
-  linAccInId            = preferences.getUChar("linAccIn",    linAccInId);
   digipot20kEnabled     = preferences.getBool("digipot20k",   false);
   digipotMaxOhm         = digipot20kEnabled ? 20000 : 10000;
   if (auxBrightDutyPct10 <= auxDimDutyPct10) {
@@ -200,10 +171,5 @@ void savePreferences() {
   preferences.putUShort("canHoldMs",   canHoldMs);
   preferences.putBool("linOut",        linOutputEnabled);
   preferences.putUChar("linOutId",     linOutputId);
-  preferences.putBool("linLegacy",     linLegacyPins);
-  preferences.putUChar("linBtnIn",     linButtonInId);
-  preferences.putUChar("linLgtIn",     linLightInId);
-  preferences.putUChar("linTmpIn",     linTempInId);
-  preferences.putUChar("linAccIn",     linAccInId);
   preferences.putBool("digipot20k",    digipot20kEnabled);
 }

@@ -20,8 +20,7 @@
       <h1>MFSW Controller</h1>
       <div class="badge-row">
         <span id="canStatusBadge" class="badge">CAN: --</span>
-        <span id="liveButtonBadge" class="badge">Last Button: --</span>
-        <span id="learnBadge" class="badge">Learn: Idle</span>
+        <span id="liveButtonBadge" class="badge">Active Button: --</span>
         <span id="fwVersion" class="badge">FW: --</span>
       </div>
     </header>
@@ -138,34 +137,6 @@
             LIN Output ID (hex)
             <input id="linOutputId" type="text" maxlength="2" placeholder="0E">
           </label>
-
-          <hr class="form-divider">
-
-          <label class="toggle-row">
-            <span>Legacy PCB (swap LIN RX/TX)</span>
-            <input id="linLegacyPins" type="checkbox">
-          </label>
-          <div class="help">Enable for legacy boards that route both LIN channels with RX/TX reversed. <strong>Reboot required</strong> for the change to take effect.</div>
-
-          <hr class="form-divider">
-
-          <label>
-            Button ID_LIN in (hex)
-            <input id="linButtonInId" type="text" maxlength="2" placeholder="0E">
-          </label>
-          <label>
-            Accessory ID_LIN in (hex)
-            <input id="linAccInId" type="text" maxlength="2" placeholder="0F">
-          </label>
-          <label>
-            Temperature ID_LIN in (hex)
-            <input id="linTempInId" type="text" maxlength="2" placeholder="3A">
-          </label>
-          <label>
-            Light ID_LIN in (hex)
-            <input id="linLightInId" type="text" maxlength="2" placeholder="0D">
-          </label>
-          <div class="help">Incoming LIN frame IDs the controller polls. If your wheel's buttons aren't recognised, use the <strong>Discover LIN IDs</strong> tool in Diagnostics to find the right ID.</div>
 
           <hr class="form-divider">
 
@@ -301,40 +272,6 @@
           </div>
           <div class="help">Each press steps the test value by 200 &Omega;, pulses the output DOWN to that value for 0.5 s, then returns it to idle HIGH. Use this to probe which resistances the stereo responds to.</div>
         </div>
-      </article>
-
-      <article class="card">
-        <h2>Discover LIN IDs</h2>
-        <p class="help">Scans both LIN buses (0x00&ndash;0x3F) for responding frames. After scanning, press a button on the wheel &mdash; the row whose data changes is your button frame. Use the assign buttons to set it.</p>
-        <div class="button-row">
-          <button id="linScanBtn" class="btn">Scan LIN Buses</button>
-          <span id="linScanStatus" class="status-line">Idle</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Bus</th>
-                <th>ID (hex)</th>
-                <th>Data</th>
-                <th>Assign</th>
-              </tr>
-            </thead>
-            <tbody id="linScanRows"></tbody>
-          </table>
-        </div>
-      </article>
-
-      <article class="card">
-        <h2>LIN Monitor</h2>
-        <div class="button-row">
-          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
-            <span>Auto-scroll</span>
-            <input id="logAutoScroll" type="checkbox" checked>
-          </label>
-          <button id="logClearBtn" class="btn secondary">Clear</button>
-        </div>
-        <pre id="logView" class="log-view"></pre>
       </article>
     </section>
 

@@ -52,7 +52,7 @@ void getLightLINFrame()
   uint8_t buf[4] = {};
   chassisLIN.resetStateMachine();
   chassisLIN.resetError();
-  chassisLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, linLightInId, 4, buf);
+  chassisLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, linLightID, 4, buf);
 
   const LIN_Master_Base::error_t linErr = chassisLIN.getError();
 
@@ -130,7 +130,7 @@ void getButtonState()
 
   steeringWheelLIN.resetStateMachine();
   steeringWheelLIN.resetError();
-  steeringWheelLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, linButtonInId, 8, recvButtonData);
+  steeringWheelLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, linButtonID, 8, recvButtonData);
 
   // Discard the frame if the library flagged any error (timeout, checksum,
   // echo mismatch, etc.).  Without this, partial bytes written by a failed
@@ -151,7 +151,7 @@ void getButtonState()
   portENTER_CRITICAL(&stateMux);
   memcpy(lastLinInFrame, recvButtonData, sizeof(lastLinInFrame));
   lastLinInLen = sizeof(lastLinInFrame);
-  lastLinInId = linButtonInId;
+  lastLinInId = linButtonID;
   portEXIT_CRITICAL(&stateMux);
 
   if (recvButtonData[1] != 0)
@@ -167,7 +167,6 @@ void getButtonState()
   const uint8_t rawButton = recvButtonData[1];
   if (rawButton != 0 && prevButtonRaw == 0)
   {
-    logLine("[SW] btn id=0x%02X on 0x%02X", rawButton, linButtonInId);
     handleButtonPressEvent(rawButton);
   }
   prevButtonRaw = rawButton;
@@ -184,7 +183,7 @@ void sendLightLINFrame()
 
   steeringWheelLIN.resetStateMachine();
   steeringWheelLIN.resetError();
-  steeringWheelLIN.sendMasterRequestBlocking(LIN_Master_Base::LIN_V2, linLightInId, 4, steeringWheelLightData);
+  steeringWheelLIN.sendMasterRequestBlocking(LIN_Master_Base::LIN_V2, linLightID, 4, steeringWheelLightData);
 
   unlockLinBus(steeringWheelLinMutex);
 }
@@ -325,175 +324,6 @@ void sendLatchedButtonOutputs()
       memcpy(lastLinOutFrame, latchedFrame, sizeof(lastLinOutFrame));
       lastLinOutLen = sizeof(lastLinOutFrame);
       lastLinOutId = linButtonID;
-      portEXIT_CRITICAL(&stateMux);
-    }
-  }
-}
-
-// Poll the accessory-button frame on the steering-wheel bus. Its button byte is
-// fed into the same mapping pipeline as the main button frame, so acc buttons
-// behave identically. Default layout mirrors the main frame (button in byte 1).
-void getAccButtonState()
-{
-  uint8_t buf[8] = {0};
-
-  if (!lockLinBus(steeringWheelLinMutex))
-  {
-    return;
-  }
-
-  steeringWheelLIN.resetStateMachine();
-  steeringWheelLIN.resetError();
-  steeringWheelLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, linAccInId, 8, buf);
-
-  const LIN_Master_Base::error_t linErr = steeringWheelLIN.getError();
-  if (linErr != LIN_Master_Base::NO_ERROR)
-  {
-    memset(buf, 0, sizeof(buf));
-  }
-  else
-  {
-    swLinLastOkMs = millis();
-  }
-
-  unlockLinBus(steeringWheelLinMutex);
-
-  portENTER_CRITICAL(&stateMux);
-  memcpy(lastAccInFrame, buf, sizeof(lastAccInFrame));
-  lastAccInLen = sizeof(lastAccInFrame);
-  portEXIT_CRITICAL(&stateMux);
-
-  const uint8_t accButton = buf[1];
-  if (accButton != 0)
-  {
-    latestLinButtonId = accButton;
-    latestLinButtonTimestamp = millis();
-    captureLearnedButton(accButton);
-    // Merge into the momentary output pipeline only when the main frame is idle.
-    if (recvButtonData[1] == 0)
-    {
-      recvButtonData[1] = accButton;
-    }
-  }
-
-  static uint8_t prevAccRaw = 0;
-  if (accButton != 0 && prevAccRaw == 0)
-  {
-    logLine("[SW] acc id=0x%02X on 0x%02X", accButton, linAccInId);
-    handleButtonPressEvent(accButton);
-  }
-  prevAccRaw = accButton;
-}
-
-// Poll the temperature frame on the steering-wheel bus. Captured for the LIN
-// monitor / status only — no control action is taken on it yet.
-void getTemperatureState()
-{
-  uint8_t buf[8] = {0};
-
-  if (!lockLinBus(steeringWheelLinMutex))
-  {
-    return;
-  }
-
-  steeringWheelLIN.resetStateMachine();
-  steeringWheelLIN.resetError();
-  steeringWheelLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, linTempInId, 8, buf);
-
-  const LIN_Master_Base::error_t linErr = steeringWheelLIN.getError();
-
-  unlockLinBus(steeringWheelLinMutex);
-
-  if (linErr != LIN_Master_Base::NO_ERROR)
-  {
-    return;  // keep last known value
-  }
-  swLinLastOkMs = millis();
-
-  portENTER_CRITICAL(&stateMux);
-  memcpy(lastTempInFrame, buf, sizeof(lastTempInFrame));
-  lastTempInLen = sizeof(lastTempInFrame);
-  portEXIT_CRITICAL(&stateMux);
-}
-
-// Poll a single protected ID on the given bus; returns true on a clean response.
-static bool probeLinId(LIN_Master_HardwareSerial_ESP32& bus, SemaphoreHandle_t mutex,
-                       uint8_t id, uint8_t* out)
-{
-  bool responded = false;
-  if (!lockLinBus(mutex))
-  {
-    return false;
-  }
-  bus.resetStateMachine();
-  bus.resetError();
-  bus.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, id, 8, out);
-  responded = (bus.getError() == LIN_Master_Base::NO_ERROR);
-  unlockLinBus(mutex);
-  return responded;
-}
-
-// Enumerate protected IDs 0x00..0x3F on both LIN buses, recording responders.
-// Runs on the steering-wheel LIN task so it owns the bus state machine.
-void runLinScan()
-{
-  linScanActive = true;
-  logLine("[SCAN] start");
-
-  LinScanResult tmp[kMaxLinScanResults];
-  size_t count = 0;
-
-  struct { LIN_Master_HardwareSerial_ESP32* bus; SemaphoreHandle_t mutex; uint8_t tag; }
-  buses[2] = {
-      {&steeringWheelLIN, steeringWheelLinMutex, 1},
-      {&chassisLIN,       chassisLinMutex,       2},
-  };
-
-  for (uint8_t b = 0; b < 2; b++)
-  {
-    for (uint8_t id = 0x00; id <= 0x3F && count < kMaxLinScanResults; id++)
-    {
-      uint8_t buf[8] = {0};
-      if (probeLinId(*buses[b].bus, buses[b].mutex, id, buf))
-      {
-        tmp[count].bus = buses[b].tag;
-        tmp[count].id = id;
-        tmp[count].len = 8;
-        memcpy(tmp[count].data, buf, 8);
-        tmp[count].responded = true;
-        count++;
-        if (buses[b].tag == 1) { swLinLastOkMs = millis(); }
-        else { chassisLinLastOkMs = millis(); }
-      }
-    }
-  }
-
-  portENTER_CRITICAL(&stateMux);
-  memcpy(linScanResults, tmp, count * sizeof(LinScanResult));
-  linScanResultCount = count;
-  portEXIT_CRITICAL(&stateMux);
-
-  linScanDoneMs = millis();
-  linScanActive = false;
-  logLine("[SCAN] done: %u responders", (unsigned)count);
-}
-
-// Re-poll only the known responder IDs to refresh their live bytes, so the UI
-// can spot which frame changes when a button is pressed during discovery.
-void refreshLinScanLiveData()
-{
-  const size_t n = linScanResultCount;
-  for (size_t i = 0; i < n && i < kMaxLinScanResults; i++)
-  {
-    uint8_t buf[8] = {0};
-    LIN_Master_HardwareSerial_ESP32& bus =
-        (linScanResults[i].bus == 2) ? chassisLIN : steeringWheelLIN;
-    SemaphoreHandle_t mutex =
-        (linScanResults[i].bus == 2) ? chassisLinMutex : steeringWheelLinMutex;
-    if (probeLinId(bus, mutex, linScanResults[i].id, buf))
-    {
-      portENTER_CRITICAL(&stateMux);
-      memcpy(linScanResults[i].data, buf, 8);
       portEXIT_CRITICAL(&stateMux);
     }
   }
