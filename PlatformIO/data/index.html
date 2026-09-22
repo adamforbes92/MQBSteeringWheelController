@@ -8,7 +8,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=%FW_VERSION%">
 </head>
 
 <body>
@@ -20,8 +20,7 @@
       <h1>MFSW Controller</h1>
       <div class="badge-row">
         <span id="canStatusBadge" class="badge">CAN: --</span>
-        <span id="liveButtonBadge" class="badge">Active Button: --</span>
-        <span id="fwVersion" class="badge">FW: --</span>
+        <span id="liveButtonBadge" class="badge">Btn: --</span>
       </div>
     </header>
 
@@ -30,6 +29,7 @@
       <button class="tab" data-tab="setup">Setup</button>
       <button class="tab" data-tab="buttons">Buttons</button>
       <button class="tab" data-tab="diag">Diagnostics</button>
+      <button class="tab" data-tab="canlog">CAN Logger</button>
       <button class="tab" data-tab="ota">OTA</button>
     </nav>
 
@@ -46,6 +46,7 @@
             <div id="pressedButtonName" class="value value-name">--</div>
           </div>
         </div>
+        <div id="latchedStatus" class="status-line">Latched: none</div>
       </article>
 
       <article class="card">
@@ -55,7 +56,7 @@
 
       <article class="card">
         <h2>Backlight</h2>
-        <div class="grid-3">
+        <div class="grid-4">
           <div class="tile">
             <div class="label">Source</div>
             <div id="backlightSource" class="value">--</div>
@@ -68,6 +69,10 @@
             <div class="label">Brightness</div>
             <div id="backlightPercent" class="value">--</div>
           </div>
+          <div class="tile">
+            <div class="label">BCM</div>
+            <div id="bcmLightPercent" class="value">--</div>
+          </div>
         </div>
       </article>
 
@@ -75,8 +80,12 @@
         <h2>Raw Frames</h2>
         <div class="stack">
           <div class="mono-block">
-            <div class="label">Incoming LIN Data</div>
+            <div class="label">Incoming LIN Data (Wheel)</div>
             <div id="incomingLinData" class="mono">--</div>
+          </div>
+          <div class="mono-block">
+            <div class="label">Incoming LIN Data (BCM)</div>
+            <div id="incomingBcmData" class="mono">--</div>
           </div>
           <div class="mono-block">
             <div class="label">Outgoing LIN Data</div>
@@ -85,6 +94,7 @@
           <div class="mono-block">
             <div class="label">Outgoing CAN Data</div>
             <div id="outgoingCanData" class="mono">--</div>
+            <div id="canTxStats" class="hint" style="margin:6px 0 0">TX: --</div>
           </div>
         </div>
       </article>
@@ -95,14 +105,68 @@
         <h2>General Setup</h2>
         <div class="form-grid">
 
+          <label>
+            Wheel Protocol
+            <select id="wheelProtocol">
+              <option value="0">PQ (older VAG)</option>
+              <option value="1">MQB (2016+ / Evo)</option>
+            </select>
+          </label>
+          <label>
+            Chassis Protocol
+            <select id="chassisProtocol">
+              <option value="1">MQB (default)</option>
+              <option value="0">PQ (older VAG)</option>
+            </select>
+          </label>
+          <div id="mqbActRow" class="mqb-act-row">
+            <label>
+              Activation preset
+              <select id="mqbActPreset">
+                <option value="custom">Custom</option>
+                <option value="ff0000">Older MQB (FF 00 00)</option>
+                <option value="816440">MQB Evo (81 64 40)</option>
+              </select>
+            </label>
+            <label>
+              Act byte 1 (hex)
+              <input id="mqbActByte1" type="text" maxlength="2" placeholder="FF">
+            </label>
+            <label>
+              Act byte 2 (hex)
+              <input id="mqbActByte2" type="text" maxlength="2" placeholder="00">
+            </label>
+            <label>
+              Act byte 3 (hex)
+              <input id="mqbActByte3" type="text" maxlength="2" placeholder="00">
+            </label>
+          </div>
+
+          <hr class="form-divider">
+
           <label class="toggle-row">
             <span>Broadcast Over CAN</span>
             <input id="canBroadcastEnabled" type="checkbox">
           </label>
           <label>
             CAN ID (hex)
-            <input id="canBroadcastId" type="text" maxlength="3" placeholder="1E0">
+            <input id="canBroadcastId" type="text" maxlength="5" placeholder="1E0">
           </label>
+          <label>
+            CAN bus speed
+            <select id="canBitrateKbit">
+              <option value="500">500 kbit/s (powertrain)</option>
+              <option value="250">250 kbit/s</option>
+              <option value="125">125 kbit/s</option>
+              <option value="100">100 kbit/s (comfort / infotainment)</option>
+            </select>
+          </label>
+          <p class="hint">
+            Must match the bus you're wired to. VW powertrain CAN is 500; the
+            comfort/infotainment bus a radio listens on is 100. At the wrong
+            speed nothing gets through in either direction and the controller
+            goes bus-off. Changing this reboots the device.
+          </p>
           <label class="toggle-row">
             <span>Paddle via CAN</span>
             <input id="paddlesEnabled" type="checkbox">
@@ -111,6 +175,51 @@
             Send on CAN (ms)
             <input id="canHoldMs" type="number" min="50" max="5000" placeholder="250">
           </label>
+
+          <hr class="form-divider">
+
+          <label>
+            Charisma (Drive Select)
+            <select id="charismaMode">
+              <option value="0">Off</option>
+              <option value="1">MQB &mdash; button press (BCM_01 0x65A)</option>
+              <option value="2">MQB &mdash; coordinator (0x385 + 0x3E8)</option>
+              <option value="3">PQ &mdash; coordinator (Gate_Komf_1 0x390)</option>
+            </select>
+          </label>
+          <p class="hint">
+            Assign a button the Charisma flag in Button Builder to drive this.
+            MQB button mode emulates the dash button and lets the car's own
+            coordinator cycle the mode; MQB coordinator mode commands each
+            participant's target program directly. PQ works differently &mdash;
+            one mode value for the whole car, carried in a multiplexed slot of
+            the comfort gateway's Gate_Komf_1, and it has no button signal at
+            all, so coordinator is the only route.
+          </p>
+          <p class="hint">
+            All of these IDs are normally transmitted by the gateway, so on a
+            car that already has Drive Select this device becomes a second
+            transmitter of an existing ID. <strong>PQ is the riskiest:</strong>
+            0x390 also carries brake lights, indicators, reverse and door
+            contacts, and everything we don't set goes out as zero. Sniff for
+            the ID before enabling.
+          </p>
+          <label id="charismaButtonRow">
+            Button signal
+            <select id="charismaButtonBit">
+              <option value="22">BCM_Charisma_Taste2</option>
+              <option value="33">BCM_Eco_Charisma_Taste</option>
+              <option value="21">BCM_Offroad_Taste</option>
+            </select>
+          </label>
+          <label id="charismaProgramRow">
+            Programs to cycle
+            <input id="charismaProgramCount" type="number" min="2" max="15" placeholder="4">
+          </label>
+          <div id="charismaParticipantsRow">
+            <span class="label">Participants to command</span>
+            <div id="charismaParticipants" class="check-grid"></div>
+          </div>
 
           <hr class="form-divider">
 
@@ -141,11 +250,49 @@
           <hr class="form-divider">
 
           <label class="toggle-row">
+            <span>Legacy PCB (swap LIN RX/TX)</span>
+            <input id="linLegacyPins" type="checkbox">
+          </label>
+          <hr class="form-divider">
+
+          <label>
+            Button ID_LIN in (hex)
+            <input id="linButtonInId" type="text" maxlength="2" placeholder="0E">
+          </label>
+          <label>
+            Accessory ID_LIN in (hex)
+            <input id="linAccInId" type="text" maxlength="2" placeholder="0F">
+          </label>
+          <label>
+            Temperature ID_LIN in (hex)
+            <input id="linTempInId" type="text" maxlength="2" placeholder="3A">
+          </label>
+          <label>
+            Light ID_LIN in (hex)
+            <input id="linLightInId" type="text" maxlength="2" placeholder="0D">
+          </label>
+          <label>
+            Button data byte (0&ndash;7)
+            <input id="linButtonByteIndex" type="number" min="0" max="7" step="1" placeholder="1">
+          </label>
+          <label>
+            Scroll data byte (0&ndash;7, 8 = none)
+            <input id="linRotaryByteIndex" type="number" min="0" max="8" step="1" placeholder="3">
+          </label>
+          <p class="hint">
+            Byte carrying scroll-wheel movement and, for ordinary buttons, the
+            wheel's own press-stage counter (1 pressed, 4 once held ~0.8&nbsp;s)
+            &mdash; byte 3 on both wheels seen so far. A roller sends the same
+            code whichever way it turns, so learn it once, duplicate the row,
+            and set the Trigger column to Scroll up on one and Scroll down on
+            the other. Short/Long press split a held button the same way.
+          </p>
+          <hr class="form-divider">
+
+          <label class="toggle-row">
             <span>Use 20 k&Omega; Digital Potentiometer</span>
             <input id="digipot20kEnabled" type="checkbox">
           </label>
-          <div class="help">Off configures a 10 k&Omega; device. Changes take effect after reboot because the digital potentiometer is configured during startup.</div>
-
         </div>
       </article>
 
@@ -160,7 +307,6 @@
             Bright Duty (%) &mdash; high duty = bright (e.g. 98.0)
             <input id="auxBrightDuty" type="number" min="0" max="100" step="0.1" placeholder="98.0">
           </label>
-          <div class="help">Frequency is fixed (~79 Hz); only PWM duty varies. LIN mode remains fixed to 0&ndash;0x7F. These duty limits are used only when Aux light input is selected.</div>
         </div>
         <div class="button-row">
           <button id="learnAuxDimBtn" class="btn secondary">Learn Dim (Current Duty)</button>
@@ -176,22 +322,29 @@
         <h2>Button Builder</h2>
         <div id="learnBuilderBanner" class="learn-banner">Learn mode idle.</div>
         <div id="openHaldexStatus" class="status-line">OpenHaldex: --</div>
+        <div id="charismaStatus" class="status-line" style="display:none">Charisma: --</div>
+        <div id="scrollStatus" class="status-line">Scroll: no movement seen yet</div>
+        <div id="unsavedBanner" class="unsaved-banner" style="display:none">
+          Unsaved changes &mdash; press <strong>Save Setup</strong> below the table to keep them.
+        </div>
         <div class="table-wrap">
-          <table>
+          <table class="mapping-table">
             <thead>
               <tr>
-                <th>MFSW Button Name</th>
-                <th>Button ID_LIN (original)</th>
+                <th>Name</th>
+                <th>Button Ori</th>
                 <th>Learn</th>
-                <th>Button ID_LIN (new)</th>
+                <th>Button New</th>
                 <th>Learn</th>
-                <th>CAN Byte (0–7)</th>
-                <th>CAN Bit (0–7)</th>
-                <th>Resistive Output (Ohm)</th>
-                <th>PNP</th>
+                <th>CAN Byte</th>
+                <th>CAN Bit</th>
+                <th>Resistive (&Omega;)</th>
+                <th>MOSFET</th>
                 <th>Latch</th>
                 <th>OpenHaldex</th>
                 <th>OH Mode</th>
+                <th>Charisma</th>
+                <th>Trigger</th>
                 <th>Delete</th>
               </tr>
             </thead>
@@ -202,6 +355,9 @@
         <div class="button-row">
           <button id="addRowBtn" class="btn secondary">Add Row</button>
           <button id="saveSetupBtn" class="btn">Save Setup</button>
+          <button id="exportSettingsBtn" class="btn secondary">Export Settings</button>
+          <button id="importSettingsBtn" class="btn secondary">Import Settings</button>
+          <input id="importSettingsFile" type="file" accept="application/json,.json" hidden>
         </div>
       </article>
     </section>
@@ -209,7 +365,7 @@
     <section id="tab-diag" class="panel">
       <article class="card">
         <h2>System Health</h2>
-        <div class="grid-2">
+        <div class="grid-3">
           <div class="tile">
             <div class="label">CAN Bus</div>
             <div id="canHealthState" class="value">--</div>
@@ -219,25 +375,27 @@
             <div id="lin1HealthState" class="value">--</div>
           </div>
           <div class="tile">
-            <div class="label">LIN 2 (Chassis)</div>
+            <div class="label">LIN 2 (Chassis, any)</div>
             <div id="lin2HealthState" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">LIN 2 Light (BCM)</div>
+            <div id="lin2LightHealthState" class="value">--</div>
           </div>
           <div class="tile">
             <div class="label">Resistive Output</div>
             <div id="resistiveHealthState" class="value">--</div>
           </div>
         </div>
-        <div class="help">Live bus status. CAN and LIN read <em>Healthy</em> while valid frames are being received. LIN 2 shows <em>Idle</em> when the chassis bus is not being polled. Resistive shows the current wiper resistance.</div>
       </article>
 
       <article class="card">
-        <h2>PNP Output (Pin 21)</h2>
+        <h2>High-Side MOSFET (Pin 21)</h2>
         <div class="form-grid">
           <label class="toggle-row">
-            <span>Activate PNP Output</span>
+            <span>Activate MOSFET</span>
             <input id="diagPnpActive" type="checkbox">
           </label>
-          <div class="help">Drives GPIO 21 HIGH to test the PNP transistor output circuit.</div>
         </div>
       </article>
 
@@ -252,7 +410,6 @@
             <span>Resistance: <span id="diagResistiveOhmDisplay">0</span> &Omega;</span>
             <input id="diagResistiveOhm" type="range" min="0" max="10000" step="100" value="0">
           </label>
-          <div class="help">Holds the X9C10X digital potentiometer at the selected resistance for bench testing. Overrides button-triggered momentary outputs.</div>
         </div>
       </article>
 
@@ -270,29 +427,198 @@
             <button id="testResistanceDownBtn" class="btn secondary">&minus; 200 &Omega;</button>
             <button id="testResistanceUpBtn" class="btn secondary">+ 200 &Omega;</button>
           </div>
-          <div class="help">Each press steps the test value by 200 &Omega;, pulses the output DOWN to that value for 0.5 s, then returns it to idle HIGH. Use this to probe which resistances the stereo responds to.</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>LIN Monitor</h2>
+        <div class="button-row">
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Passthru Mode</span>
+            <input id="passthruEnabled" type="checkbox">
+          </label>
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Auto-scroll</span>
+            <input id="logAutoScroll" type="checkbox" checked>
+          </label>
+          <button id="logExportBtn" class="btn secondary">Export (CSV)</button>
+          <button id="logClearBtn" class="btn secondary">Clear</button>
+        </div>
+        <pre id="logView" class="log-view" aria-label="LIN monitor results"></pre>
+      </article>
+    </section>
+
+    <section id="tab-canlog" class="panel">
+      <article class="card">
+        <h2>CAN Monitor</h2>
+        <p class="hint">
+          Off by default and never persisted &mdash; it always starts off after
+          a reboot. With no ID filter this records each distinct ID <em>once</em>,
+          which is how to find out what a bus actually carries; a busy 500&nbsp;kbit/s
+          bus would otherwise fill the 300-frame buffer in well under a second.
+          Set a filter ID to follow one message instead. Export writes SavvyCAN's
+          CSV column order, so the file opens there directly.
+        </p>
+        <div class="button-row">
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Enable</span>
+            <input id="canLogEnabled" type="checkbox">
+          </label>
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Filter ID (hex, blank = all)</span>
+            <input id="canLogId" type="text" maxlength="3" placeholder="390" style="width:5rem">
+          </label>
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Only on change</span>
+            <input id="canLogChangedOnly" type="checkbox" checked>
+          </label>
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Auto-scroll</span>
+            <input id="canLogAutoScroll" type="checkbox" checked>
+          </label>
+          <button id="canLogExportBtn" class="btn secondary">Export (CSV)</button>
+          <button id="canLogClearBtn" class="btn secondary">Clear</button>
+        </div>
+        <pre id="canLogView" class="log-view" aria-label="CAN monitor results"></pre>
+      </article>
+
+      <article class="card">
+        <h2>SavvyCAN Analyzer</h2>
+        <p class="hint">
+          Streams every received frame to a real analyzer, with no buffer limit
+          &mdash; use this instead of the monitor above when you need a full
+          capture. Over WiFi: SavvyCAN &rarr; Add New Device Connection &rarr;
+          Network Connection (GVRET), this device's IP, port 23. Over serial:
+          GVRET Compatible Device on the COM port. The two are mutually
+          exclusive, and <strong>serial mode reopens the USB port at 1&nbsp;Mbaud,
+          so the debug console is unusable while it runs.</strong>
+        </p>
+        <div class="button-row">
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>WiFi (TCP port 23)</span>
+            <input id="analyzerWifi" type="checkbox">
+          </label>
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Serial (USB 1 Mbaud)</span>
+            <input id="analyzerSerial" type="checkbox">
+          </label>
+          <label class="toggle-row" style="flex:0 0 auto;gap:.5rem;">
+            <span>Protocol</span>
+            <select id="analyzerProtocol">
+              <option value="0">GVRET (SavvyCAN)</option>
+              <option value="1">Lawicel/SLCAN (CANHacker)</option>
+            </select>
+          </label>
         </div>
       </article>
     </section>
 
     <section id="tab-ota" class="panel">
       <article class="card">
-        <h2>OTA Update</h2>
-        <div id="fwVersionOta" class="status-line">FW: --</div>
-        <p>Upload firmware binary over WiFi.</p>
-        <label>
-          Firmware (.bin)
+        <h2>Device</h2>
+        <div class="ota-info">
+          <div><span>Firmware</span><strong id="otaFwVersion">--</strong></div>
+          <div><span>Web UI</span><strong id="otaFsVersion">--</strong></div>
+          <div><span>Board</span><strong id="otaBoard">--</strong></div>
+          <div><span>Updates</span><strong id="otaSafe">--</strong></div>
+        </div>
+        <p class="hint" id="otaSafeHint"></p>
+      </article>
+
+      <article class="card">
+        <h2>Update from GitHub</h2>
+        <div class="ota-info">
+          <div><span>Installed</span><strong id="updInstalled">--</strong></div>
+          <div><span>Latest</span><strong id="updLatest">--</strong></div>
+          <div><span>Status</span><strong id="updState">Not checked</strong></div>
+        </div>
+        <p class="hint">This browser needs internet while it can still reach the controller: join the controller to your
+          router in <a href="#otaWifiStaCard" id="updGoBridge">Home WiFi</a> below, put this phone on the same network and
+          open the address that card shows. On the controller's own access point alone most phones drop mobile data.
+          Keep this page open until the device has rebooted. Release channel: <code id="updRepo">--</code></p>
+        <div class="ota-row">
+          <button id="updCheckBtn" class="btn primary">Check for updates</button>
+          <button id="updBridgeBtn" class="btn" hidden>Set up Home WiFi</button>
+          <label class="upd-beta"><input type="checkbox" id="updShowAll"> Show beta / older versions</label>
+        </div>
+        <div id="updStatus" class="status-line">Idle</div>
+        <div id="updPicker" hidden>
+          <label class="ota-field">Version
+            <select id="updVersion"></select>
+          </label>
+          <div id="updNotes" class="upd-notes"></div>
+          <div class="ota-row">
+            <button id="updInstallBtn" class="btn primary">Install selected</button>
+          </div>
+        </div>
+        <div class="ota-steps" id="updSteps">
+          <div class="ota-step" data-step="dlfs"><span class="ota-step-num">1</span> Get UI</div>
+          <div class="ota-step" data-step="fs"><span class="ota-step-num">2</span> Flash UI</div>
+          <div class="ota-step" data-step="verify"><span class="ota-step-num">3</span> Verify</div>
+          <div class="ota-step" data-step="dlfw"><span class="ota-step-num">4</span> Get FW</div>
+          <div class="ota-step" data-step="fw"><span class="ota-step-num">5</span> Flash FW</div>
+          <div class="ota-step" data-step="reboot"><span class="ota-step-num">6</span> Reboot</div>
+        </div>
+        <div class="ota-progress" id="updProgressWrap" hidden>
+          <div class="ota-progress-bar" id="updProgressBar"></div>
+          <span class="ota-progress-label" id="updProgressLabel">0%</span>
+        </div>
+      </article>
+
+      <article class="card" id="otaWifiStaCard">
+        <h2>Home WiFi (Bridge Mode)</h2>
+        <p class="hint">Join the controller to your home or garage router; its own access point keeps running. Once it
+          shows <em>Connected</em>, put this phone on the same network, open the address shown and press
+          <strong>Check for updates</strong> again.</p>
+        <p class="status-line" id="otaWifiStaStatus">--</p>
+        <div class="ota-wifi-row">
+          <input type="text" id="otaWifiStaSsidInput" placeholder="Home network name" maxlength="32" autocomplete="off" spellcheck="false" list="otaWifiStaSsidList">
+          <datalist id="otaWifiStaSsidList"></datalist>
+          <button class="btn ota-icon" id="otaWifiStaScan" title="Scan for networks">&#128269;</button>
+        </div>
+        <div class="ota-wifi-row">
+          <input type="password" id="otaWifiStaPasswordInput" placeholder="Home network password (blank = open)" maxlength="64" autocomplete="new-password">
+          <button class="btn ota-icon" id="otaWifiStaPasswordToggle" title="Show / hide password">&#128065;</button>
+        </div>
+        <div class="ota-row">
+          <button class="btn" id="otaWifiStaSave">Save &amp; Apply</button>
+          <button class="btn" id="otaWifiStaReset">Disable</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Update from Files</h2>
+        <p class="hint">No internet needed here. Download <code>littlefs.bin</code> and <code>firmware.bin</code> from the
+          newest <code>V…</code> folder under <code>Releases/</code> on GitHub, then upload them here:
+          <strong>Filesystem</strong> (littlefs.bin, the web interface) first, then <strong>Firmware</strong>
+          (firmware.bin). The device reboots once the firmware upload completes.</p>
+        <div class="ota-steps" id="otaSteps">
+          <div class="ota-step" data-step="filesystem"><span class="ota-step-num">1</span> Filesystem</div>
+          <div class="ota-step" data-step="firmware"><span class="ota-step-num">2</span> Firmware</div>
+        </div>
+        <label class="ota-field">Update Type
+          <select id="otaType">
+            <option value="filesystem">Filesystem (web UI)</option>
+            <option value="firmware">Firmware (application)</option>
+          </select>
+        </label>
+        <label class="ota-field">Binary (.bin)
           <input id="otaBin" type="file" accept=".bin,application/octet-stream">
         </label>
-        <div class="button-row">
-          <button id="otaUploadBtn" class="btn">Upload Firmware</button>
+        <div class="ota-progress" id="otaProgressWrap" hidden>
+          <div class="ota-progress-bar" id="otaProgressBar"></div>
+          <span class="ota-progress-label" id="otaProgressLabel">0%</span>
+        </div>
+        <div class="ota-row">
+          <button id="otaUploadBtn" class="btn primary">Upload</button>
         </div>
         <div id="otaStatus" class="status-line">Idle</div>
       </article>
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=%FW_VERSION%"></script>
+  <script src="ota.js?v=%FW_VERSION%"></script>
 </body>
 
 </html>

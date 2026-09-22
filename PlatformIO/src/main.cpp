@@ -11,18 +11,37 @@ Created by Forbes Automotive.com
 
 #include <Arduino.h>
 
+#include "defs.h"
 #include "io.h"
 #include "tasks.h"
 #include "API.h"
 #include "power_manager.h"
+#include "wifi_manager.h"
+#include "ota_manager.h"
 
 void setup() {
   basicInit(); // basic init for IO
 #if ENABLE_IO_TEST
   startTasks(); // manufacturing IO test owns the outputs and bus interfaces
 #else
-  setupWiFi(); // setup WiFi connection and mDNS
-  setupApiServer(); // setup API server
+  // Universal WiFi front-end: SoftAP at 192.168.1.1, reachable as mfsw.local,
+  // LittleFS mounted, firmware-versioned (cache-busted) UI serving.
+  wifimgr_config_t wcfg = wifiDefaultConfig();
+  wcfg.hostName = wifiHostName; // SoftAP SSID + hostname
+  wcfg.mdnsName = "mfsw";       // http://mfsw.local
+  wcfg.fwVersion = FW_VERSION;  // injected into index.html for cache-busting
+  wifiManagerInit(&wcfg);
+
+  // Universal OTA module: firmware (U_FLASH) + filesystem (U_SPIFFS) updates,
+  // reachable on the "OTA" tab. Must be initialised before setupApiServer(),
+  // which registers the OTA routes via otaManagerAttach(server).
+  ota_config_t ocfg = otaDefaultConfig();
+  ocfg.fwVersion = FW_VERSION;
+  ocfg.product = "MFSW Controller";
+  ocfg.githubRepo = "adamforbes92/MQBSteeringWheelController"; // Releases/ + releases.json for "Check for updates"
+  otaManagerInit(&ocfg);
+
+  setupApiServer(); // register API routes + static serving, then start server
 
   // Universal reduced-power module: turns WiFi off 1 min after the last client
   // disconnects, scales CPU 240->80 MHz, releases Bluetooth and kills the
@@ -36,4 +55,5 @@ void setup() {
 
 void loop() {
   vTaskDelay(pdMS_TO_TICKS(1000)); // purely idling in the main loop — all work is done in tasks and ISRs
+  wifiManagerTick();               // Home WiFi (bridge mode): connection tracking + retry back-off
 }

@@ -7,6 +7,7 @@
 #include "io.h"
 #include "CAN.h"
 #include "LIN.h"
+#include "savvycan.h"
 
 #if ENABLE_IO_TEST
 struct IoTestState {
@@ -80,6 +81,16 @@ void ioTestTask(void* parameter) {
 }
 #endif
 
+// Normal-mode (non-passthru) backlight source selection ONLY — this function
+// has no idea passthruEnabled exists and must stay that way. Passthru's own
+// light-frame relay is entirely self-contained in serviceChassisLinBus()
+// (LIN.cpp), which writes steeringWheelLightData itself the instant it sees
+// the BCM's frame; steeringWheelLinTask() is the only place that decides
+// which of the two gets to run each cycle (see its call site). Do not add a
+// passthruEnabled branch back in here — that was tried and is what caused
+// backlight in passthru to silently depend on whatever this function's
+// Aux/Forced logic happened to compute (see log 9's writeup), instead of
+// being a dumb byte-for-byte mirror with zero shared logic to go wrong.
 static void updateBacklightState() {
   // -----------------------------------------------------------------------
   // Aux PWM measurement — 1-second averaging window.
@@ -114,11 +125,25 @@ static void updateBacklightState() {
   // -----------------------------------------------------------------------
   // Apply the measured (or forced) value to the steering wheel LIN frame.
   // -----------------------------------------------------------------------
+
+  // Backlight-frame bytes 1..3 gate button reporting on MQB wheels: they only
+  // populate their button bytes when the 0x0D frame carries valid "activate"
+  // content. PQ wheels ignore these bytes, so keep their historical values.
+  if (wheelProtocol == WHEEL_PROTOCOL_MQB) {
+    steeringWheelLightData[1] = mqbActByte1;
+    steeringWheelLightData[2] = mqbActByte2;
+    steeringWheelLightData[3] = mqbActByte3;
+  } else {
+    steeringWheelLightData[1] = 0xF9;
+    steeringWheelLightData[2] = 0xFF;
+    steeringWheelLightData[3] = 0xFF;
+  }
+
   if (!useAuxLightSource) {
     if (forceBacklight) {
       steeringWheelLightData[0] = (uint8_t)((forceBacklightPercent * upperLightsLIN) / 100U);
     } else {
-      // Forward chassis LIN brightness — gatewayLightData[0] populated by getLightLINFrame().
+      // Forward chassis LIN brightness — gatewayLightData[0] populated by serviceChassisLinBus() (chassisLinListenerTask).
       const uint8_t linRaw = gatewayLightData[0];
       steeringWheelLightData[0] = linRaw < upperLightsLIN ? linRaw : upperLightsLIN;
     }
@@ -194,22 +219,59 @@ static void steeringWheelLinTask(void* parameter) {
 
   while (1) {
     // --- Light frame (0x0D) ---
-    // In LIN mode: read brightness from chassis bus, then forward to steering wheel.
-    // In AUX/FORCED mode: skip the chassis read to avoid unnecessary blocking.
+    // Reading the chassis/BCM light frame itself now happens continuously in
+    // chassisLinListenerTask() (serviceChassisLinBus()), not here — see that
+    // task for why it needs a much tighter loop than this one's ~100 ms
+    // cadence. In Passthru Mode, skip the normal Aux/Forced/LIN source
+    // computation entirely — serviceChassisLinBus() already wrote
+    // steeringWheelLightData itself as a plain byte-for-byte mirror the
+    // instant it saw the BCM's frame, and calling updateBacklightState()
+    // here too would immediately overwrite that mirror with a computed
+    // value from whatever source happens to be selected, every single
+    // cycle (exactly the bug the mirror was added to fix).
     steeringWheelLIN.handler();
-    if (!useAuxLightSource && !forceBacklight) {
-      getLightLINFrame();
+    if (!passthruEnabled) {
+      updateBacklightState();
     }
-    updateBacklightState();
     sendLightLINFrame();
 
-    // --- Button frame (0x0E) — wheel sends, chassis listens ---
+    // --- Button frame (0x0E) — wheel sends here; in Passthru Mode the reply
+    // to the chassis/BCM happens reactively in chassisLinListenerTask(), not
+    // from sendButtonLINFrame() below (which is a no-op in that mode) ---
     steeringWheelLIN.handler();
     getButtonState();
+    if (linAccInId != 0) {
+      getAccButtonState();  // acc buttons merge into the same output pipeline
+    }
+    // Temperature is informational only — poll ~once per second to avoid adding
+    // a per-cycle blocking transaction that would slow button response.
+    static uint8_t tempPollDivider = 0;
+    if (linTempInId != 0 && ++tempPollDivider >= 10) {
+      tempPollDivider = 0;
+      getTemperatureState();
+    }
     sendButtonLINFrame();
     sendLatchedButtonOutputs();
 
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(linPause));
+  }
+}
+
+// Owns LIN2 (chassis/BCM bus) RX entirely: services serviceChassisLinBus()
+// as close to continuously as FreeRTOS allows. This has to run far tighter
+// than steeringWheelLinTask's ~100 ms cadence — a LIN slave only has a few
+// byte-times after the BCM's header to start answering (see
+// serviceChassisLinBus()'s header comment for why this device must answer
+// as a slave at all). 1 ms is the practical floor on a 1 kHz FreeRTOS tick;
+// it still gives a huge latency improvement over the old 100 ms poll, and
+// serviceChassisLinBus() drains everything currently pending each call
+// rather than one byte at a time, so nothing queues up between ticks.
+static void chassisLinListenerTask(void* parameter) {
+  (void)parameter;
+
+  while (1) {
+    serviceChassisLinBus();
+    vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
 
@@ -219,6 +281,7 @@ static void debounceOutputTask(void* parameter) {
   while (1) {
     broadcastButtonsCAN();
     serviceOpenHaldex();
+    serviceCharisma();
 
     // PNP output: diagnostic override → latch state → momentary hold.
     {
@@ -229,7 +292,7 @@ static void debounceOutputTask(void* parameter) {
         for (size_t i = 0; i < buttonMappingCount; i++) {
           if (buttonLatched[i] &&
               (buttonMappings[i].flags & FLAG_ACTIVATES_PNP) &&
-              !(buttonMappings[i].flags & FLAG_OPENHALDEX_CONTROL)) {
+              !(buttonMappings[i].flags & (FLAG_OPENHALDEX_CONTROL | FLAG_CHARISMA_CONTROL))) {
             pnpActive = true;
             break;
           }
@@ -242,7 +305,7 @@ static void debounceOutputTask(void* parameter) {
         for (size_t i = 0; i < buttonMappingCount; i++) {
           if ((buttonMappings[i].flags & FLAG_ACTIVATES_PNP) &&
               !(buttonMappings[i].flags & FLAG_LATCH) &&
-              !(buttonMappings[i].flags & FLAG_OPENHALDEX_CONTROL) &&
+              !(buttonMappings[i].flags & (FLAG_OPENHALDEX_CONTROL | FLAG_CHARISMA_CONTROL)) &&
               buttonMappings[i].oldButtonId == latestLinButtonId) {
             pnpActive = true;
             break;
@@ -327,6 +390,9 @@ void startTasks() {
 #endif
 
 
+  // SavvyCAN analyzer task — idles until a mode is enabled from the UI.
+  setupAnalyzer();
+
   // GRA (paddle shift) task — broadcasts continuously at 20 ms, matching DSG keepalive expectation
   xTaskCreate(broadcastGRATask, "broadcastGRATask", 2048, nullptr, 2, nullptr);
 
@@ -351,6 +417,17 @@ void startTasks() {
   if (linResult != pdPASS) {
     DEBUG("steeringWheelLinTask create pinned failed, falling back to xTaskCreate");
     xTaskCreate(steeringWheelLinTask, "steeringWheelLinTask", 8192, nullptr, 3, nullptr);
+  }
+
+  // Chassis LIN2 listener — higher priority than steeringWheelLinTask (4 vs 3)
+  // and on the same core, so it preempts promptly the moment a byte lands on
+  // Serial2 instead of waiting behind LIN1's blocking transactions. See its
+  // own comment for why it needs to run this much tighter than every other
+  // LIN task in this file.
+  BaseType_t chassisListenResult = xTaskCreatePinnedToCore(chassisLinListenerTask, "chassisLinListenerTask", 4096, nullptr, 4, nullptr, 1);
+  if (chassisListenResult != pdPASS) {
+    DEBUG("chassisLinListenerTask create pinned failed, falling back to xTaskCreate");
+    xTaskCreate(chassisLinListenerTask, "chassisLinListenerTask", 4096, nullptr, 4, nullptr);
   }
 
   // create the debounce and output control task on core 0 (CAN and output updates must run on the same core)

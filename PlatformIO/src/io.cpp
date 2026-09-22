@@ -1,5 +1,6 @@
 #include "io.h"
 
+#include <driver/gpio.h>    // gpio_reset_pin() — detach UART from old pins
 #include <soc/gpio_reg.h>   // GPIO_IN_REG / GPIO_IN1_REG for fast pin reads
 
 #include "globals.h"
@@ -13,7 +14,7 @@
 // Why accumulate instead of single-cycle measurement?
 //   An optocoupler introduces asymmetric propagation delay (rise ≠ fall time,
 //   typically 3–4 µs each for a PC817).  On a single cycle this creates direct
-//   duty-cycle error and apparent frequency jitter.  Averaging hundreds of
+//   duty-cycle error and frequency errors.  Averaging hundreds of
 //   cycles over 1 s cancels the per-edge noise and gives a stable result.
 //
 // Why GPIO register read instead of digitalRead()?
@@ -123,6 +124,38 @@ void basicInit() {
   DEBUG("LIN Initialising...");
   steeringWheelLIN.begin(linBaud);
   chassisLIN.begin(linBaud);
+  // NOTE (TEMPORARY — inverted for on-board testing): default to the LEGACY
+  // swapped RX/TX layout so a legacy board runs without any configuration, then
+  // re-define to the normal layout only when legacy mode is OFF. Revert to the
+  // original `if (linLegacyPins)` swap once non-legacy boards are confirmed.
+  //
+  // A bare end()+begin() with swapped pins is not enough: ESP32's HardwareSerial
+  // leaves the previous GPIO-matrix routing attached to the original pins, so
+  // both the old and new UART signals stay live and the swap silently fails
+  // (RX never reads). Fully release the pads with gpio_reset_pin() between
+  // end() and begin() so only the intended RX/TX routing remains.
+
+  // --- default: legacy (swapped) RX/TX layout ---
+  Serial1.end();
+  Serial2.end();
+  gpio_reset_pin(static_cast<gpio_num_t>(pinRX_LINSteeringWheel));
+  gpio_reset_pin(static_cast<gpio_num_t>(pinTX_LINSteeringWheel));
+  gpio_reset_pin(static_cast<gpio_num_t>(pinRX_LINchassis));
+  gpio_reset_pin(static_cast<gpio_num_t>(pinTX_LINchassis));
+  Serial1.begin(linBaud, SERIAL_8N1, pinTX_LINSteeringWheel, pinRX_LINSteeringWheel);
+  Serial2.begin(linBaud, SERIAL_8N1, pinTX_LINchassis, pinRX_LINchassis);
+
+  if (!linLegacyPins) {
+    // --- not legacy: re-define to the normal RX/TX layout ---
+    Serial1.end();
+    Serial2.end();
+    gpio_reset_pin(static_cast<gpio_num_t>(pinRX_LINSteeringWheel));
+    gpio_reset_pin(static_cast<gpio_num_t>(pinTX_LINSteeringWheel));
+    gpio_reset_pin(static_cast<gpio_num_t>(pinRX_LINchassis));
+    gpio_reset_pin(static_cast<gpio_num_t>(pinTX_LINchassis));
+    Serial1.begin(linBaud, SERIAL_8N1, pinRX_LINSteeringWheel, pinTX_LINSteeringWheel);
+    Serial2.begin(linBaud, SERIAL_8N1, pinRX_LINchassis, pinTX_LINchassis);
+  }
   DEBUG("LIN Initialised!");
 
   DEBUG("CAN/TWAI Initialising...");
