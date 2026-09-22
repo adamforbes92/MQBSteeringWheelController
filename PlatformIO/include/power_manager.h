@@ -79,6 +79,13 @@ typedef struct
 {
   // --- WiFi auto-off ---
   uint32_t wifiIdleTimeoutMs;   // idle time before entering reduced power (0 = never auto-reduce)
+  uint32_t wifiBootGraceMs;     // idle timeout used until the FIRST client of this power-up connects.
+                                // The steady-state timeout is deliberately short (heat), but it also
+                                // starts counting the moment the board powers up - so with nothing
+                                // else the AP can be gone before anyone reaches their phone, and it
+                                // only ever returns on a power cycle. This gives the first connection
+                                // (notably an OTA update) a longer window without changing the in-car
+                                // behaviour once someone has been on. 0 = no grace, use the timeout.
   bool manageWifiRadio;         // if true, module calls WiFi.mode(WIFI_OFF)/restores on its own
   bool keepWifiWhileBusy;       // if true, powerIsBusy()==true keeps the device active
 

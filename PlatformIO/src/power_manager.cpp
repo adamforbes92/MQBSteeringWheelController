@@ -144,6 +144,10 @@ static void powerExitToActive(void)
 }
 
 // ---- Manager task -----------------------------------------------------------
+// Cleared on boot, set the first time powerIsBusy() reports a client. Until
+// then the (longer) boot grace applies - see wifiBootGraceMs in the header.
+static bool g_everBusy = false;
+
 static void powerTask(void *arg)
 {
   (void)arg;
@@ -164,11 +168,19 @@ static void powerTask(void *arg)
     {
       // Anything the project reports as "busy" keeps us awake.
       if (g_cfg.keepWifiWhileBusy && powerIsBusy())
+      {
         g_lastActivityMs = millis();
+        g_everBusy = true; // grace window is over - short timeout from here on
+      }
+
+      // Until the first client of this power-up, allow the longer boot grace.
+      uint32_t timeout = g_cfg.wifiIdleTimeoutMs;
+      if (!g_everBusy && g_cfg.wifiBootGraceMs > timeout)
+        timeout = g_cfg.wifiBootGraceMs;
 
       if (g_state == POWER_STATE_ACTIVE &&
-          g_cfg.wifiIdleTimeoutMs > 0 &&
-          (millis() - g_lastActivityMs) >= g_cfg.wifiIdleTimeoutMs)
+          timeout > 0 &&
+          (millis() - g_lastActivityMs) >= timeout)
       {
         powerEnterReduced();
       }
@@ -182,7 +194,8 @@ static void powerTask(void *arg)
 power_config_t powerDefaultConfig(void)
 {
   power_config_t c = {};
-  c.wifiIdleTimeoutMs = 1UL * 60UL * 1000UL; // 1 minute
+  c.wifiIdleTimeoutMs = 1UL * 60UL * 1000UL; // after the last client leaves
+  c.wifiBootGraceMs   = 5UL * 60UL * 1000UL; // ...but 5 minutes to catch the first one
   c.manageWifiRadio = true;
   c.keepWifiWhileBusy = true;
 
@@ -270,7 +283,8 @@ void powerInit(const power_config_t *cfg)
   xTaskCreatePinnedToCore(powerTask, "powerMgr", 3072, NULL, 1, &g_taskHandle, 0);
   g_initialised = true;
 
-  powerLog("init: timeout %lus, %u->%u MHz",
+  powerLog("init: boot grace %lus then timeout %lus, %u->%u MHz",
+           (unsigned long)(g_cfg.wifiBootGraceMs / 1000),
            (unsigned long)(g_cfg.wifiIdleTimeoutMs / 1000),
            (unsigned)g_cfg.cpuFreqActiveMhz,
            (unsigned)g_cfg.cpuFreqReducedMhz);

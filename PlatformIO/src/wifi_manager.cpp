@@ -83,7 +83,11 @@ static String jsonEscape(const String &s)
 static void staLoad(void)
 {
   Preferences p;
-  if (!p.begin("wifimgr", true))
+  // Read-write, not read-only: opening a namespace read-only before it has
+  // ever been written fails with NOT_FOUND, and Preferences logs that at
+  // ERROR level on every cold boot. Opening read-write creates the namespace
+  // on first use and writes nothing, so the load is silent and harmless.
+  if (!p.begin("wifimgr", false))
     return;
   String s = p.getString("staSsid", "");
   String w = p.getString("staPass", "");
@@ -274,7 +278,8 @@ void wifiManagerStartAP(void)
     return;
   if (!g_wcfg.manageAp)
   {
-    staStart(); // the project has its own AP up (or will call wifiManagerStaStart() when it does)
+    staStart();      // the project has its own AP up (or will call wifiManagerStaStart() when it does)
+    wifiStartMdns(); // still ours to start - the project's AP is up, the name is not
     return;
   }
 
@@ -370,16 +375,21 @@ void wifiManagerAttachStatic(AsyncWebServer &server)
     if (otaFsUiAvailable())
     {
       const char *path = strHasContent(g_wcfg.indexPath) ? g_wcfg.indexPath : "/index.html";
-      File f = LittleFS.open(path, "r");
-      if (!f)
+      if (!LittleFS.exists(path))
       {
         request->send(404, "text/plain", "index not found");
         return;
       }
-      String html = f.readString();
-      f.close();
-      html.replace("%FW_VERSION%", strHasContent(g_wcfg.fwVersion) ? g_wcfg.fwVersion : "");
-      res = request->beginResponse(200, "text/html", html);
+      // Streamed straight off the filesystem - no large allocation. The old
+      // path read the whole 40 KB file into a String and let beginResponse()
+      // copy it again; readString() returns a SHORT string on a failed alloc
+      // rather than an error, so a heap squeeze served a valid 200 with an
+      // empty body (a blank page, nothing in the log).
+      //
+      // Asset cache-busting (?v=) is baked into index.html when FW_VERSION is
+      // bumped - NOT substituted at runtime. tools/make_release.py refuses to
+      // cut a release if they disagree.
+      res = request->beginResponse(LittleFS, path, "text/html");
     }
     else
     {

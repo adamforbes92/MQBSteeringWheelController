@@ -29,17 +29,21 @@ void setup() {
   wifimgr_config_t wcfg = wifiDefaultConfig();
   wcfg.hostName = wifiHostName; // SoftAP SSID + hostname
   wcfg.mdnsName = "mfsw";       // http://mfsw.local
-  wcfg.fwVersion = FW_VERSION;  // injected into index.html for cache-busting
-  wifiManagerInit(&wcfg);
-
-  // Universal OTA module: firmware (U_FLASH) + filesystem (U_SPIFFS) updates,
-  // reachable on the "OTA" tab. Must be initialised before setupApiServer(),
-  // which registers the OTA routes via otaManagerAttach(server).
+  wcfg.fwVersion = FW_VERSION;  // recovery page only; index.html bakes its own
+  // MUST precede wifiManagerInit(): that mounts the web-UI filesystem via
+  // otaFsMountSafe(), so ota_manager has to be configured first or a failed
+  // mount passes silently.
   ota_config_t ocfg = otaDefaultConfig();
   ocfg.fwVersion = FW_VERSION;
   ocfg.product = "MFSW Controller";
   ocfg.githubRepo = "adamforbes92/MQBSteeringWheelController"; // Releases/ + releases.json for "Check for updates"
   otaManagerInit(&ocfg);
+
+  wifiManagerInit(&wcfg);
+
+  // Universal OTA module: firmware (U_FLASH) + filesystem (U_SPIFFS) updates,
+  // reachable on the "OTA" tab. Must be initialised before setupApiServer(),
+  // which registers the OTA routes via otaManagerAttach(server).
 
   setupApiServer(); // register API routes + static serving, then start server
 
