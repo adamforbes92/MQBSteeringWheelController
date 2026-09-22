@@ -1,0 +1,91 @@
+{
+  "product": "MQBSteeringWheelController",
+  "latest": "1.05",
+  "releases": [
+    {
+      "version": "1.05",
+      "channel": "stable",
+      "date": "2026-09-21",
+      "ota": true,
+      "notes": "OTA overhaul: update from GitHub, Home WiFi bridge mode, recovery page; shared ota_manager/wifi_manager v2.",
+      "firmware": {
+        "path": "V1.05/firmware.bin",
+        "size": 1234592,
+        "sha256": "50db58d03a98f3f0e798af91806a319d0d5dec4217c4ec662780514608ac274d"
+      },
+      "filesystem": {
+        "path": "V1.05/littlefs.bin",
+        "size": 1441792,
+        "sha256": "caa5764d6bf2d269102499850df674989aac1809a785f30ee4ebb1d138da455f"
+      }
+    },
+    {
+      "version": "1.04",
+      "channel": "stable",
+      "date": "2026-09-20",
+      "ota": true,
+      "notes": "Shared UI theme; per-product cache-busting.",
+      "firmware": {
+        "path": "V1.04/firmware.bin",
+        "size": 1205904,
+        "sha256": "c3dad6b821fd3386ba7ae58d817137ba820e9ab5825e7cf5b03e6db16cc9ce7a"
+      },
+      "filesystem": {
+        "path": "V1.04/littlefs.bin",
+        "size": 1441792,
+        "sha256": "34c72dba02f1659553ed86d7f16d401caeba0b2d22fda36a0c3d0317f9dca2e0"
+      }
+    },
+    {
+      "version": "1.02",
+      "channel": "stable",
+      "date": "2026-09-20",
+      "ota": true,
+      "notes": "",
+      "firmware": {
+        "path": "V1.02/firmware.bin",
+        "size": 1070416,
+        "sha256": "dfd3333907b9663707b55361e3321b6487a75b3f3a9bdf00b2b8c51eb21e84b3"
+      },
+      "filesystem": {
+        "path": "V1.02/littlefs.bin",
+        "size": 1441792,
+        "sha256": "32c84902a3982a720b04a10cff9d2403d35b450f98eab90abf0589c2bb17fc5c"
+      }
+    },
+    {
+      "version": "1.01",
+      "channel": "stable",
+      "date": "2026-09-20",
+      "ota": true,
+      "notes": "",
+      "firmware": {
+        "path": "V1.01/firmware.bin",
+        "size": 1063616,
+        "sha256": "3b2de19e1623305b6f42389c8883cf7f3c3aa73993ad6d47e0325172c67aae21"
+      },
+      "filesystem": {
+        "path": "V1.01/littlefs.bin",
+        "size": 1441792,
+        "sha256": "a25e077d33b3b49ca61d1478084b674299d94ff8236f327a352ecee8d0fc9a16"
+      }
+    },
+    {
+      "version": "1.00",
+      "channel": "stable",
+      "date": "2026-09-20",
+      "ota": true,
+      "notes": "",
+      "firmware": {
+        "path": "V1.00/firmware.bin",
+        "size": 1062224,
+        "sha256": "54df6d9e5f47bcc302d9c957ee38e0640151a3d5adf0bfe2c0d47fd3d4b38f6c"
+      },
+      "filesystem": {
+        "path": "V1.00/littlefs.bin",
+        "size": 1441792,
+        "sha256": "dcacc7edfbde1facbe27519ded4ca36fc641f49115a1b851b83912b93d88766e"
+      }
+    }
+  ]
+}
