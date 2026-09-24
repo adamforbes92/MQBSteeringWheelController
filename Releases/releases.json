@@ -11,12 +11,12 @@
       "firmware": {
         "path": "V1.05/firmware.bin",
         "size": 1235792,
-        "sha256": "f8884152437e7f4751ea5162af4bacaab1b3697ef900a1cadc22206e527802de"
+        "sha256": "737098e2c00197c0fa5ce3fb7fc056b58b6e2f0e6b1a7411795534e5a2b5d1b2"
       },
       "filesystem": {
         "path": "V1.05/littlefs.bin",
-        "size": 720896,
-        "sha256": "3418434162e8d7e18033eb93bc87b58adf395b8e54caa422ca7b585c4edffbf5"
+        "size": 655360,
+        "sha256": "03dc726c25f81877fd2856400306b1d5857a782730a8b0d74b4d7eb9ccaa30c2"
       }
     },
     {
