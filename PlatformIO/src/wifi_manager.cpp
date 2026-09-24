@@ -89,8 +89,11 @@ static void staLoad(void)
   // on first use and writes nothing, so the load is silent and harmless.
   if (!p.begin("wifimgr", false))
     return;
-  String s = p.getString("staSsid", "");
-  String w = p.getString("staPass", "");
+  // isKey() first: getString() on an absent key logs at ERROR level on every
+  // cold boot ("nvs_get_str len fail: staSsid NOT_FOUND") even though a missing
+  // key just means bridge mode was never configured.
+  String s = p.isKey("staSsid") ? p.getString("staSsid", "") : String();
+  String w = p.isKey("staPass") ? p.getString("staPass", "") : String();
   p.end();
   strncpy(g_staSsid, s.c_str(), sizeof(g_staSsid) - 1);
   g_staSsid[sizeof(g_staSsid) - 1] = '\0';
