@@ -129,6 +129,28 @@ volatile uint8_t linRotaryByteIndex = 3;
 volatile int8_t  wheelRotaryDelta   = 0;
 volatile uint8_t wheelPressStage    = 0;
 
+uint8_t rollerCodes[32] = {0};
+
+bool isRollerCode(uint8_t code) {
+  return code != 0 && (rollerCodes[code >> 3] & (1U << (code & 7))) != 0;
+}
+
+bool markRollerCode(uint8_t code) {
+  if (code == 0 || isRollerCode(code)) {
+    return false;
+  }
+  portENTER_CRITICAL(&stateMux);
+  rollerCodes[code >> 3] |= (uint8_t)(1U << (code & 7));
+  portEXIT_CRITICAL(&stateMux);
+  return true;
+}
+
+void clearRollerCodes() {
+  portENTER_CRITICAL(&stateMux);
+  memset(rollerCodes, 0, sizeof(rollerCodes));
+  portEXIT_CRITICAL(&stateMux);
+}
+
 volatile uint8_t latestLinButtonId = 0;
 volatile uint32_t latestLinButtonTimestamp = 0;
 
@@ -324,6 +346,10 @@ void loadPreferences() {
   if (charismaProgram > charismaProgramCount) charismaProgram = 1;
   digipot20kEnabled     = preferences.getBool("digipot20k",   false);
   digipotMaxOhm         = digipot20kEnabled ? 20000 : 10000;
+  if (preferences.isKey("rollerCodes") &&
+      preferences.getBytesLength("rollerCodes") == sizeof(rollerCodes)) {
+    preferences.getBytes("rollerCodes", rollerCodes, sizeof(rollerCodes));
+  }
   if (auxBrightDutyPct10 <= auxDimDutyPct10) {
     auxDimDutyPct10    = 197;
     auxBrightDutyPct10 = 980;
@@ -362,4 +388,11 @@ void savePreferences() {
   preferences.putUChar("chaProgN",     charismaProgramCount);
   preferences.putUChar("chaParts",     charismaParticipants);
   preferences.putBool("digipot20k",    digipot20kEnabled);
+  {
+    uint8_t rollers[sizeof(rollerCodes)];
+    portENTER_CRITICAL(&stateMux);
+    memcpy(rollers, rollerCodes, sizeof(rollers));
+    portEXIT_CRITICAL(&stateMux);
+    preferences.putBytes("rollerCodes", rollers, sizeof(rollers));
+  }
 }

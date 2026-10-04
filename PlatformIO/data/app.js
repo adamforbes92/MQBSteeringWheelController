@@ -3,6 +3,15 @@ document.addEventListener("DOMContentLoaded", initApp);
 let mappings = [];
 let latchedRows = new Set();  // indices of rows whose latch is engaged, from /api/status
 let seenMappingsRevision = null;  // firmware's counter of Learn results; see mergeLearnedCodes()
+let rollerCodes = new Set();  // button codes the firmware has seen behave as a scroll wheel
+
+// Returns true when the set actually changed, so callers only redraw then.
+function setRollerCodes(list) {
+  const next = new Set(Array.isArray(list) ? list.map(Number) : []);
+  const changed = next.size !== rollerCodes.size || [...next].some((c) => !rollerCodes.has(c));
+  rollerCodes = next;
+  return changed;
+}
 
 // Unsaved-changes tracking for the button table. Settings controls save
 // themselves on change; the table does not — it needs Save Setup, which sits
@@ -38,12 +47,23 @@ async function mergeLearnedCodes() {
     if (!res.ok) return;
     const setup = await res.json();
     const fresh = Array.isArray(setup.mappings) ? setup.mappings : [];
+    setRollerCodes(setup.rollerCodes);
     let changed = false;
     fresh.forEach((f, i) => {
       const m = mappings[i];
       if (!m) return;
       for (const k of ["oldButtonId", "newLinButtonId", "sourceByte"]) {
         if (num(m[k]) !== num(f[k])) { m[k] = f[k]; changed = true; }
+      }
+      // Learn also sets the trigger when it recognises a scroll wheel. Only
+      // taken for the row being learned, so an unsaved Trigger edit on any
+      // other row is not reverted.
+      if (i === localLearnRow && localLearnTarget === 1) {
+        const trig = num(f.flags) & TRIGGER_MASK;
+        if ((num(m.flags) & TRIGGER_MASK) !== trig) {
+          m.flags = (num(m.flags) & ~TRIGGER_MASK) | trig;
+          changed = true;
+        }
       }
     });
     if (changed) {
@@ -52,8 +72,116 @@ async function mergeLearnedCodes() {
       // Save Setup, and the Trigger change that usually follows will flag it.
       renderMappings();
       setStatus("Learned code applied.");
+      offerRollerPartner(localLearnRow);
     }
   } catch (e) {}
+}
+
+// ---- Scroll wheels ---------------------------------------------------------
+// A roller sends one code whichever way it turns, so it needs two rows: one
+// Scroll up, one Scroll down. The firmware marks a code as a roller the first
+// time it moves in a way no button can (see isRollerDelta() in globals.h);
+// these helpers use that to flag rows and add the missing half of a pair.
+
+function defaultButtonByte() {
+  const v = num(document.getElementById("linButtonByteIndex").value);
+  return v >= 0 && v < 8 ? v : 1;
+}
+
+function rowIsRoller(row) {
+  const sb = num(row.sourceByte);
+  return num(row.oldButtonId) !== 0 && rollerCodes.has(num(row.oldButtonId)) &&
+    (sb === 0 || sb === defaultButtonByte());
+}
+
+// Direction a row is filtered to: FLAG_ROTARY_UP, FLAG_ROTARY_DOWN, or 0 for
+// "either" (neither bit, or both).
+function rowDirection(row) {
+  const bits = num(row.flags) & (FLAG_ROTARY_UP | FLAG_ROTARY_DOWN);
+  return bits === FLAG_ROTARY_UP || bits === FLAG_ROTARY_DOWN ? bits : 0;
+}
+
+function hasRowFor(code, dir, exceptIdx) {
+  return mappings.some((m, i) => i !== exceptIdx && num(m.oldButtonId) === code &&
+    rowIsRoller(m) && rowDirection(m) === dir);
+}
+
+// What a roller row still needs: "split" (fires either way: make it Scroll up
+// and add a Scroll down row), "add" (one direction, partner missing), or null.
+function rollerFix(idx) {
+  const row = mappings[idx];
+  if (!row || !rowIsRoller(row)) return null;
+  const dir = rowDirection(row);
+  if (dir === 0) return { kind: "split" };
+  const other = dir === FLAG_ROTARY_UP ? FLAG_ROTARY_DOWN : FLAG_ROTARY_UP;
+  if (hasRowFor(num(row.oldButtonId), other, idx)) return null;
+  return { kind: "add", dir: other };
+}
+
+function dirWord(dir) {
+  return dir === FLAG_ROTARY_UP ? "up" : "down";
+}
+
+const MAX_MAPPING_ROWS = 24;  // kMaxButtonMappings in defs.h
+
+function applyRollerFix(idx) {
+  const fix = rollerFix(idx);
+  if (!fix) return false;
+  if (mappings.length >= MAX_MAPPING_ROWS) {
+    alert(`The table is full (${MAX_MAPPING_ROWS} rows) — delete a row to add the other scroll direction.`);
+    return false;
+  }
+  const row = mappings[idx];
+  let partnerDir = fix.dir;
+  if (fix.kind === "split") {
+    row.flags = (num(row.flags) & ~TRIGGER_MASK) | FLAG_ROTARY_UP;
+    partnerDir = FLAG_ROTARY_DOWN;
+  }
+  // The partner shares the code and the LIN output code (the direction rides
+  // in the scroll byte, which is passed through). CAN, resistive and the
+  // action columns are left empty: the other direction almost always wants a
+  // different one, and copying them would make both directions do the same.
+  const base = String(row.name || "Scroll").slice(0, 17);
+  mappings.splice(idx + 1, 0, {
+    name: `${base} ${dirWord(partnerDir)}`,
+    oldButtonId: num(row.oldButtonId),
+    newLinButtonId: num(row.newLinButtonId),
+    canByteIndex: 255,
+    canBitIndex: 0,
+    resistiveOhm: 0,
+    flags: partnerDir,
+    openHaldexMode: 0,
+    sourceByte: num(row.sourceByte),
+  });
+  renderMappings();
+  // Saved straight away, as Add Row does: the firmware addresses Learn by row
+  // index, and inserting a row shifts every index below it.
+  saveSetup();
+  return true;
+}
+
+function offerRollerPartner(idx) {
+  const fix = rollerFix(idx);
+  if (!fix || fix.kind !== "add") return;
+  const row = mappings[idx];
+  const code = num(row.oldButtonId).toString(16).toUpperCase().padStart(2, "0");
+  const ok = confirm(
+    `Row ${idx + 1} (code 0x${code}) is a scroll wheel, learned as Scroll ${dirWord(rowDirection(row))}.\n\n` +
+    `Add the matching Scroll ${dirWord(fix.dir)} row below it?`
+  );
+  if (ok) applyRollerFix(idx);
+}
+
+async function forgetRollerCodes() {
+  if (!confirm("Forget every code marked as a scroll wheel? Rows keep their triggers; a roller is re-detected the next time it is scrolled down.")) return;
+  try {
+    const res = await fetch("/api/rollers/clear", { method: "POST" });
+    if (!res.ok) throw new Error("request failed");
+    setRollerCodes([]);
+    renderMappings();
+  } catch (err) {
+    alert(`Forget scroll wheels failed: ${err.message}`);
+  }
 }
 let pollTimer = null;
 let localLearnUntil = 0;
@@ -275,6 +403,7 @@ function wireControls() {
   });
 
   document.getElementById("saveSetupBtn").addEventListener("click", saveSetup);
+  document.getElementById("forgetRollersBtn").addEventListener("click", forgetRollerCodes);
   document.getElementById("learnAuxDimBtn").addEventListener("click", () => learnAuxLimit("dim"));
   document.getElementById("learnAuxBrightBtn").addEventListener("click", () => learnAuxLimit("bright"));
 
@@ -695,6 +824,7 @@ async function loadSetup() {
     document.getElementById("auxBrightDuty").value = Number((setup.auxBrightDuty != null ? setup.auxBrightDuty : 980) / 10).toFixed(1);
 
     mappings = Array.isArray(setup.mappings) ? setup.mappings : [];
+    setRollerCodes(setup.rollerCodes);
     setMappingsDirty(false);
     renderMappings();
   } catch (err) {
@@ -833,6 +963,20 @@ async function loadStatus() {
         `Scroll: last movement ${s.rotaryDelta > 0 ? "+" : ""}${s.rotaryDelta} (${dir})`;
     }
 
+    // A roller detected in normal use (not just via Learn) changes which rows
+    // need flagging, so redraw — only then, as it discards a half-typed edit.
+    if (Array.isArray(s.rollerCodes)) {
+      if (setRollerCodes(s.rollerCodes)) renderMappings();
+      const listEl = document.getElementById("rollerCodesStatus");
+      if (listEl) {
+        const codes = [...rollerCodes].sort((a, b) => a - b)
+          .map((c) => "0x" + c.toString(16).toUpperCase().padStart(2, "0"));
+        listEl.textContent = codes.length
+          ? `Scroll wheels detected: ${codes.join(", ")}`
+          : "Scroll wheels detected: none yet — scroll one down to detect it";
+      }
+    }
+
     const chaEl = document.getElementById("charismaStatus");
     if (chaEl) {
       const mode = Number(s.charismaMode || 0);
@@ -894,7 +1038,9 @@ function updateLearnBannerFromStatus(status) {
 
 function learnTargetText(target) {
   if (target === 1) {
-    return "Button ID_LIN (original)";
+    // Scrolling down is what proves a code is a roller (a button never reports
+    // a negative step), so that is the way to learn one.
+    return "Button ID_LIN (original) — press it; for a scroll wheel, scroll it DOWN one click";
   }
   if (target === 2) {
     return "Button ID_LIN (new)";
@@ -928,6 +1074,20 @@ function renderMappings() {
     const ohMode = (typeof row.openHaldexMode === "number") ? row.openHaldexMode : 0;
     const exDis = (ohEnabled || chaEnabled) ? " disabled" : "";
 
+    // A row on a scroll-wheel code that still fires "either way" fires once
+    // per sweep in both directions — flag it and offer the fix in place.
+    const fix = rollerFix(idx);
+    const trigWarn = fix && fix.kind === "split" ? ' class="warn-cell"' : "";
+    const trigTitle = rowIsRoller(row)
+      ? (fix && fix.kind === "split"
+        ? "Scroll wheel: this row fires both ways and only once per sweep. Split makes it Scroll up and adds a Scroll down row."
+        : "Scroll wheel code — the trigger picks which way it turns.")
+      : "When this row fires. A roller sends one code both ways, so use two rows: Scroll up and Scroll down. Short/Long split a held button: Short stops matching once the hold passes ~0.8 s, Long starts then — so one code can tap for one action and hold for another. Long press + Latch = toggle on hold.";
+    const fixBtn = !fix ? ""
+      : fix.kind === "split"
+        ? `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Make this row Scroll up and add a Scroll down row">Split &#9650;&#9660;</button>`
+        : `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Add the Scroll ${dirWord(fix.dir)} row for this wheel">+ ${fix.dir === FLAG_ROTARY_UP ? "&#9650;" : "&#9660;"} row</button>`;
+
     tr.innerHTML = `
       <td><input data-field="name" data-idx="${idx}" type="text" value="${escapeAttr(row.name || "")}"></td>
       <td><input data-field="oldButtonId" data-idx="${idx}" type="number" min="0" max="255" value="${num(row.oldButtonId)}" title="${srcByteHint(row)}"${srcByteSuspect(row) ? ' class="warn-cell"' : ""}></td>
@@ -942,7 +1102,7 @@ function renderMappings() {
       <td style="text-align:center"><input data-field="flags" data-subfield="openhaldex" data-idx="${idx}" type="checkbox" title="OpenHaldex control (exclusive: overrides MOSFET/CAN/LIN for this button)" ${ohEnabled ? "checked" : ""}${chaEnabled ? " disabled" : ""}></td>
       <td><select data-field="openHaldexMode" data-idx="${idx}" title="OpenHaldex mode to set on press"${ohEnabled ? "" : " disabled"}>${ohModeOptions(ohMode)}</select></td>
       <td style="text-align:center"><input data-field="flags" data-subfield="charisma" data-idx="${idx}" type="checkbox" title="Charisma / Drive Select: press advances the program (exclusive: overrides MOSFET/CAN/LIN for this button). Set the output mode in Settings." ${chaEnabled ? "checked" : ""}${ohEnabled ? " disabled" : ""}></td>
-      <td><select data-field="trigger" data-idx="${idx}" title="When this row fires. A roller sends one code both ways, so use two rows: Scroll up and Scroll down. Short/Long split a held button: Short stops matching once the hold passes ~0.8 s, Long starts then — so one code can tap for one action and hold for another. Long press + Latch = toggle on hold."${exDis}>${triggerOptions(num(row.flags))}</select></td>
+      <td><select data-field="trigger" data-idx="${idx}" title="${trigTitle}"${trigWarn}${exDis}>${triggerOptions(num(row.flags))}</select>${fixBtn}</td>
       <td><button class="btn tiny danger" data-delete="row" data-idx="${idx}">Delete</button></td>
     `;
 
@@ -959,6 +1119,10 @@ function renderMappings() {
 
   tbody.querySelectorAll("button[data-delete='row']").forEach((btn) => {
     btn.addEventListener("click", onDeleteRowClick);
+  });
+
+  tbody.querySelectorAll("button[data-roller-fix]").forEach((btn) => {
+    btn.addEventListener("click", () => applyRollerFix(Number(btn.dataset.rollerFix)));
   });
 }
 
@@ -1010,6 +1174,7 @@ function onEditRow(event) {
     const v = Number(event.target.value);
     const entry = TRIGGERS.find((t) => t[0] === v);
     mappings[idx].flags = cleared | (entry ? entry[2] : 0);
+    renderMappings();  // the scroll-wheel Split / + row offer depends on it
     return;
   }
   if (field === "openHaldexMode") {

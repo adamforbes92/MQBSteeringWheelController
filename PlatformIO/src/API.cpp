@@ -39,6 +39,16 @@ static String frameToHex(const uint8_t* data, uint8_t len) {
   return out;
 }
 
+// Codes known to be scroll wheels, as a plain list (usually one or two).
+static void addRollerCodes(JsonDocument& doc) {
+  JsonArray arr = doc["rollerCodes"].to<JsonArray>();
+  for (uint16_t c = 1; c < 256; c++) {
+    if (isRollerCode((uint8_t)c)) {
+      arr.add(c);
+    }
+  }
+}
+
 void setupWiFi() {
   // WiFi bring-up is handled by the universal wifi_manager (SoftAP + mDNS).
   wifiManagerStartAP();
@@ -234,6 +244,7 @@ void setupApiServer() {
     doc["charismaMode"] = charismaMode;
     doc["charismaProgram"] = charismaProgram;
     doc["rotaryDelta"] = wheelRotaryDelta;
+    addRollerCodes(doc);
 
     // Rows whose latch is currently engaged, by index into the mapping table.
     JsonArray latched = doc["latched"].to<JsonArray>();
@@ -300,6 +311,7 @@ void setupApiServer() {
       row["openHaldexMode"] = buttonMappings[i].openHaldexMode;  // 0-5 or 255 (push-to-next)
       row["sourceByte"] = buttonMappings[i].sourceByte;  // 0 = default byte; set by Learn (e.g. 6/7)
     }
+    addRollerCodes(doc);
 
     String payload;
     serializeJson(doc, payload);
@@ -565,6 +577,13 @@ void setupApiServer() {
 
   server.on("/api/learn/cancel", HTTP_POST, [](AsyncWebServerRequest* request) {
     clearLearnState();
+    request->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  // Forget every code marked as a scroll wheel (e.g. after swapping wheels).
+  // Rows keep their triggers; a roller is re-detected the next time it moves.
+  server.on("/api/rollers/clear", HTTP_POST, [](AsyncWebServerRequest* request) {
+    clearRollerCodes();
     request->send(200, "application/json", "{\"ok\":true}");
   });
 

@@ -8,7 +8,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="style.css?v=1.05">
+  <link rel="stylesheet" href="style.css?v=1.06">
 </head>
 
 <body>
@@ -283,9 +283,13 @@
             Byte carrying scroll-wheel movement and, for ordinary buttons, the
             wheel's own press-stage counter (1 pressed, 4 once held ~0.8&nbsp;s)
             &mdash; byte 3 on both wheels seen so far. A roller sends the same
-            code whichever way it turns, so learn it once, duplicate the row,
-            and set the Trigger column to Scroll up on one and Scroll down on
-            the other. Short/Long press split a held button the same way.
+            code whichever way it turns, so it needs two rows: Scroll up and
+            Scroll down. Learn it by scrolling it <strong>down</strong> one
+            click &mdash; that marks the code as a scroll wheel, sets the row to
+            Scroll down and offers to add the Scroll up row. Rows on a detected
+            scroll wheel that still fire either way are flagged in the Trigger
+            column with a Split button. Short/Long press split a held button
+            the same way.
           </p>
           <hr class="form-divider">
 
@@ -324,6 +328,10 @@
         <div id="openHaldexStatus" class="status-line">OpenHaldex: --</div>
         <div id="charismaStatus" class="status-line" style="display:none">Charisma: --</div>
         <div id="scrollStatus" class="status-line">Scroll: no movement seen yet</div>
+        <div class="status-line">
+          <span id="rollerCodesStatus">Scroll wheels detected: --</span>
+          <button id="forgetRollersBtn" class="btn tiny secondary" type="button" title="Forget the detected scroll-wheel codes (e.g. after fitting a different wheel). Rows keep their triggers.">Forget</button>
+        </div>
         <div id="unsavedBanner" class="unsaved-banner" style="display:none">
           Unsaved changes &mdash; press <strong>Save Setup</strong> below the table to keep them.
         </div>
@@ -617,8 +625,8 @@
     </section>
   </main>
 
-  <script src="app.js?v=1.05"></script>
-  <script src="ota.js?v=1.05"></script>
+  <script src="app.js?v=1.06"></script>
+  <script src="ota.js?v=1.06"></script>
 </body>
 
 </html>

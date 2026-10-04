@@ -124,6 +124,23 @@ extern volatile int8_t  wheelRotaryDelta;
 // (not a roller) is held. 0 when idle. See FLAG_PRESS_SHORT / _LONG in defs.h.
 extern volatile uint8_t wheelPressStage;
 
+// Button codes known to be scroll wheels (rollers), one bit per code. A code
+// earns its bit the first time the wheel reports it with a movement no plain
+// button can produce — see isRollerDelta(). Persisted, so a roller only has to
+// be scrolled once. The UI reads this to tag rows and offer the paired
+// Scroll up / Scroll down row.
+extern uint8_t rollerCodes[32];
+bool isRollerCode(uint8_t code);
+bool markRollerCode(uint8_t code);  // true if the code was not already known
+void clearRollerCodes();
+
+// Whether a movement value proves the code carrying it is a roller. On MQB a
+// plain button reports its press stage in the same byte — 1 on the first
+// frame, then 4/5/6 while held, never 2/3 and never negative — so only a
+// negative step or a +2/+3 is unambiguous. A +1 is either a button press or a
+// single slow detent up and proves nothing on its own.
+inline bool isRollerDelta(int8_t d) { return d < 0 || d == 2 || d == 3; }
+
 // Steering-wheel protocol family. MQB wheels only populate their button bytes
 // once the master publishes a valid 0x0D backlight frame with "activate" bytes;
 // PQ wheels don't require this. See mqbActByte1..3.

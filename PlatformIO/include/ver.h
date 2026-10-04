@@ -5,7 +5,20 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
-Unreleased - Independent Chassis Protocol (PQ/MQB) for the button frame sent to the
+V1.06 - Scroll-wheel (roller) detection and assignment, from the 02/10/2026 MQB
+        capture (scroll.csv): a roller reports a signed per-frame detent count
+        in byte 3 (01..03 up, 0F..0C down) under one code per roller (0x06 left,
+        0x12 right); a plain button reports 1 on its first frame, then 4/5/6
+        held, never 2/3 or negative. So a negative or +2/+3 step marks a code as
+        a roller, persisted (NVS "rollerCodes"), whether seen during Learn or in
+        normal use. Learn sets Scroll up/down on the learned row when the step
+        is unambiguous or the code is a known roller (scroll DOWN to learn one),
+        and clears a stale direction otherwise. The UI lists detected rollers
+        (with Forget), flags roller rows that still fire either way with a
+        Split button, and offers/adds the missing Scroll up/down partner row.
+        /api/status and /api/setup report rollerCodes; /api/rollers/clear.
+        Also ships everything below that was pending as "Unreleased":
+        Independent Chassis Protocol (PQ/MQB) for the button frame sent to the
         chassis/BCM, separate from Wheel Protocol, so any combination bridges (PQ/PQ,
         PQ/MQB, MQB/PQ, MQB/MQB); changing either protocol prompts to update button
         rows still on a known PQ/MQB code, leaving learned/customised rows alone.

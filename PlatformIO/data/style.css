@@ -493,7 +493,11 @@ input[type="range"]::-moz-range-thumb, .slider::-moz-range-thumb, .slider-inline
 .mapping-table input,
 .mapping-table select { min-width: 0; padding: 7px 8px; font-size: 13px; }
 /* row matching an unexpected frame byte — usually a mis-learned row */
-.mapping-table input.warn-cell { border-color: var(--accent-2); }
+.mapping-table input.warn-cell,
+.mapping-table select.warn-cell { border-color: var(--accent-2); }
+/* scroll-wheel Split / + row button under the Trigger select */
+.mapping-table td > select + .btn.tiny { margin-top: 4px; }
+#forgetRollersBtn { width: auto; margin-left: 8px; padding: 3px 10px; font-size: 12px; }
 /* unsaved button-table edits */
 .unsaved-banner {
   margin: 8px 0 12px;

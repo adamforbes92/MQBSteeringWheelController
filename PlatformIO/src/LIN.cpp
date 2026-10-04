@@ -41,7 +41,12 @@ static void logLinFrameIfChanged(uint8_t bus, uint8_t id, const uint8_t* data, u
   }
   // Byte 0 of the button frame is a free-running counter that changes every
   // poll; ignore a change that is ONLY in byte 0 so it doesn't flood the log.
-  if (seen[b][id] && len > 1 && memcmp(lastSeen[b][id] + 1, data + 1, len - 1) == 0)
+  // Except while a control is active (button byte non-zero): the scroll wheel
+  // reports movement per frame, so two polls that each say "+1" are two
+  // detents and must both appear — collapsing them made a 2x scroll read as 1.
+  const uint8_t bi = (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
+  const bool active = bi < len && data[bi] != 0;
+  if (!active && seen[b][id] && len > 1 && memcmp(lastSeen[b][id] + 1, data + 1, len - 1) == 0)
   {
     memcpy(lastSeen[b][id], data, len);
     return;
@@ -333,7 +338,9 @@ static void shapeFrameForChassis(uint8_t* frame)
   frame[6] = 0x00;
 }
 
-static void captureLearned(uint8_t value, uint8_t byteIdx)
+// `rotary` is the scroll movement read from the same frame the code was
+// captured from (0 when there is none, or the code came from another frame).
+static void captureLearned(uint8_t value, uint8_t byteIdx, int8_t rotary)
 {
   expireLearnState();
   if (!learnActive || learnRowIndex >= buttonMappingCount)
@@ -343,16 +350,36 @@ static void captureLearned(uint8_t value, uint8_t byteIdx)
 
   if (learnTarget == LEARN_OLD_LIN)
   {
-    buttonMappings[learnRowIndex].oldButtonId = value;
-    buttonMappings[learnRowIndex].sourceByte = byteIdx;
+    ButtonMapping& m = buttonMappings[learnRowIndex];
+    m.oldButtonId = value;
+    m.sourceByte = byteIdx;
 
-    // Direction is NOT inferred here. It looked obvious — capture the sign of
-    // the rotary byte while learning — but on the MQB wheel captured in
-    // lin_wheel_20260913_160641.csv the plain button codes 0x07 and 0x20 move
-    // that byte too (1, then 4, 5, 6 across consecutive held frames, only ever
-    // upward, so more like a hold counter than movement). Inferring from it
-    // would silently tag ordinary buttons "Up only". The Scroll column on the
-    // row is the explicit way to say it instead.
+    // Scroll direction is inferred only when it is certain. Plain buttons move
+    // the rotary byte too (their press stage: 1, then 4/5/6 while held —
+    // lin_wheel_20260913_160641.csv), so a +1 alone could be either; taking
+    // its sign would tag ordinary buttons "Scroll up". But a button's first
+    // frame is always stage 1 and never negative (scroll.csv, 02/10/2026), so
+    // a negative or +2/+3 step on the captured frame can only be a roller, as
+    // can any code already seen doing that. Learning a roller by scrolling it
+    // DOWN therefore always lands as a Scroll down row.
+    // (getButtonState() has normally marked it already, from this same frame.)
+    if (isRollerDelta(rotary))
+    {
+      markRollerCode(value);
+    }
+    if (isRollerCode(value) && rotary != 0)
+    {
+      // Press-stage bits are meaningless on a roller (its byte 3 is movement,
+      // not a hold counter), so the direction replaces the whole trigger.
+      m.flags = (uint8_t)((m.flags & ~kTriggerMask) |
+                          (rotary > 0 ? FLAG_ROTARY_UP : FLAG_ROTARY_DOWN));
+    }
+    else
+    {
+      // Not (yet) known as a roller: a direction left over from whatever this
+      // row was learned as before would stop it matching a plain button.
+      m.flags = (uint8_t)(m.flags & ~(FLAG_ROTARY_UP | FLAG_ROTARY_DOWN));
+    }
   }
   else if (learnTarget == LEARN_NEW_LIN)
   {
@@ -390,7 +417,10 @@ static void captureLearnedFromFrame(const uint8_t* frame)
       if (frame[i] != 0 && frame[i] != learnBaseline[i] && prev[i] == learnBaseline[i])
       {
         memcpy(prev, frame, sizeof(prev));
-        captureLearned(frame[i], i);
+        // Movement belongs to the code on the button byte only; a paddle or
+        // horn captured from byte 6/7 says nothing about scrolling.
+        const uint8_t bi = (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
+        captureLearned(frame[i], i, (i == bi) ? wheelRotaryDelta : 0);
         return;
       }
     }
@@ -847,6 +877,14 @@ void getButtonState()
   wheelRotaryDelta = computeRotaryDelta(recvButtonData, linErr == LIN_Master_Base::NO_ERROR);
   wheelPressStage  = (linRotaryByteIndex < 8) ? recvButtonData[linRotaryByteIndex] : 0;
 
+  // Remember any code that proves itself a roller in normal use, so the UI can
+  // flag rows on it that still fire "either way" — not only ones just learned.
+  if (recvButtonData[bi] != 0 && isRollerDelta(wheelRotaryDelta) &&
+      markRollerCode(recvButtonData[bi]))
+  {
+    logLine("[SW] code 0x%02X is a scroll wheel (d=%+d)", recvButtonData[bi], (int)wheelRotaryDelta);
+  }
+
   // Learn captures whichever byte (1..7) changed from the idle baseline, so a
   // paddle (byte 6) or horn (byte 7) is captured with its real byte position.
   if (learnActive)
@@ -896,8 +934,10 @@ void getButtonState()
       (buttonMappings[matchedIdx].flags & (FLAG_ROTARY_UP | FLAG_ROTARY_DOWN)) != 0;
   if (matchedIdx >= 0 && (matchedIdx != prevMatchedIdx || rotaryRow))
   {
-    logLine("[SW] btn id=0x%02X byte %u", buttonMappings[matchedIdx].oldButtonId,
-            (unsigned)mappingSourceByte(buttonMappings[matchedIdx]));
+    logLine("[SW] btn id=0x%02X byte %u row=%d d=%+d st=%u",
+            buttonMappings[matchedIdx].oldButtonId,
+            (unsigned)mappingSourceByte(buttonMappings[matchedIdx]), matchedIdx,
+            (int)wheelRotaryDelta, (unsigned)wheelPressStage);
     handleButtonPressEvent(static_cast<size_t>(matchedIdx));
   }
   prevMatchedIdx = matchedIdx;
@@ -1225,7 +1265,7 @@ void getAccButtonState()
     latestLinButtonTimestamp = millis();
     if (learnActive)
     {
-      captureLearned(accButton, bi);
+      captureLearned(accButton, bi, 0);
     }
     // Merge into the momentary output pipeline only when the main frame is idle.
     if (recvButtonData[bi] == 0)

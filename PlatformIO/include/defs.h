@@ -13,7 +13,7 @@
 
 #include "ver.h"
 
-#define FW_VERSION "1.05"
+#define FW_VERSION "1.06"
 
 #define enableDebug 0
 #define debugIO 0
@@ -116,6 +116,7 @@ constexpr uint8_t FLAG_ROTARY_DOWN        = 0x20;  // bit 5: only when it steps 
 constexpr uint8_t FLAG_PRESS_SHORT        = 0x40;  // bit 6: only while stage < kLongPressStage
 constexpr uint8_t FLAG_PRESS_LONG         = 0x80;  // bit 7: only once stage >= kLongPressStage
 constexpr uint8_t kLongPressStage         = 4;
+constexpr uint8_t kTriggerMask = FLAG_ROTARY_UP | FLAG_ROTARY_DOWN | FLAG_PRESS_SHORT | FLAG_PRESS_LONG;
 
 constexpr uint16_t MOTOR1_ID = 0x280;
 constexpr uint16_t MOTOR2_ID = 0x288;
