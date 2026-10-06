@@ -192,35 +192,38 @@ let localLearnTarget = 0;
 const OH_MODE_NAMES = ["Stock", "FWD", "50:50", "60:40", "75:25", "Expert"];
 const OH_MODE_PUSH_NEXT = 255;
 
-// [pqCode, mqbCode] pairs for buttons independently verified against the
+// [pqCode, mqbCode, mebCode] pairs for buttons independently verified against the
 // README's documented MQB code table (see "MQB button codes" section) — the
 // only rows we're confident enough about to auto-derive. Everything else
 // (Phone, Voice/Mic ACC x2, Paddle +/-, Paddles-both, Horn) isn't in that
 // list, so "Overwrite Existing Layout" leaves those rows untouched.
 const KNOWN_BUTTON_CODE_PAIRS = [
-  [0x03, 0x16], // Previous
-  [0x02, 0x15], // Next
-  [0x1A, 0x19], // Voice/Mic
-  [0x29, 0x23], // Return
-  [0x22, 0x04], // Up
-  [0x23, 0x05], // Down
-  [0x09, 0x03], // Source -
-  [0x0A, 0x02], // Source +
-  [0x28, 0x07], // OK
-  [0x06, 0x10], // Volume +
-  [0x07, 0x11], // Volume -
+  [0x03, 0x16, 0x04], // Previous (pre-'24 MEB does not recognize 0x16 but recognizes "Up" as "Previous")
+  [0x02, 0x15, 0x05], // Next (pre-'24 MEB does not recognize 0x15 but recognizes "Down" as "Next")
+  [0x1A, 0x19, 0x19], // Voice/Mic
+  [0x29, 0x23, 0x23], // Return (View on MQB and MEB wheels with "View" button)
+  [0x22, 0x04, 0x04], // Up
+  [0x23, 0x05, 0x05], // Down
+  [0x09, 0x03, 0x03], // Source - (menu left on MQB and MEB)
+  [0x0A, 0x02, 0x02], // Source + (menu right on MQB and MEB)
+  [0x28, 0x07, 0x07], // OK
+  [0x06, 0x10, 0x10], // Volume +
+  [0x07, 0x11, 0x11], // Volume -
+  [null, 0x25, 0x25], // Steering Wheel heat button
+  [null, 0x74, 0x74], // ACC/Travel Assist Toggle (buttons that support Travel Assist)
+  [0x2B, 0x0C, 0x0C], // cruise "mode" button (ACC/standard) on models with only cancel and mode buttons
 ];
 
 // Rewrite oldButtonId/newLinButtonId for rows whose current (old, new) pair
-// still matches one of the known PQ/MQB pairs above (in either order), using
+// still matches one of the known PQ/MQB/MEB pairs above (in either order), using
 // whichever code each protocol selector now calls for. A row a user has
 // already re-learned to a real-world value no longer matches either side of
 // a known pair, so it's left alone automatically — no separate "custom" flag
 // needed. Pass {dryRun: true} to just count how many rows WOULD change,
 // without touching the mappings array. Returns the number of rows affected.
 function applyProtocolDefaultsToMappings({ dryRun = false } = {}) {
-  const wheelIsMqb = document.getElementById("wheelProtocol").value === "1";
-  const chassisIsMqb = document.getElementById("chassisProtocol").value === "1";
+  const wheelProtocol = document.getElementById("wheelProtocol")?.value || "0"; // default '0' for wheelProtocol is PQ
+  const chassisProtocol = document.getElementById("chassisProtocol")?.value || "1"; // default '1' for chassisProtocol is MQB
   // Wheel and chassis on the SAME protocol (PQ<->PQ or MQB<->MQB) means no
   // translation is possible by definition -- every configured row's new code
   // must equal its old code. This has to apply to every row, not just the
@@ -229,7 +232,7 @@ function applyProtocolDefaultsToMappings({ dryRun = false } = {}) {
   // them), so under the old pair-only logic they stayed stuck at whatever
   // "new" code they shipped with (0 in the default table) even in a
   // same-protocol setup where they trivially should have matched "old".
-  const sameProtocolBothSides = wheelIsMqb === chassisIsMqb;
+  const sameProtocolBothSides = wheelProtocol === chassisProtocol;
   let updated = 0;
 
   mappings.forEach((m) => {
@@ -247,13 +250,36 @@ function applyProtocolDefaultsToMappings({ dryRun = false } = {}) {
     }
 
     const pair = KNOWN_BUTTON_CODE_PAIRS.find(
-      ([pq, mqb]) => (old === pq && nw === mqb) || (old === mqb && nw === pq)
+      ([pq, mqb, meb]) => (old === pq && nw === mqb) || (old === pq && nw === meb) || (old === mqb && nw === pq) || (old === mqb && nw === meb) || (old === meb && nw === pq) || (old === meb && nw === mqb)
     );
     if (!pair) return;
 
-    const [pq, mqb] = pair;
-    const newOld = wheelIsMqb ? mqb : pq;
-    const newNew = chassisIsMqb ? mqb : pq;
+    const [pq, mqb, meb] = pair;
+    const newOld = (() => {
+      switch (wheelProtocol) {
+        case '0':
+          return pq;
+        case '1':
+          return mqb;
+        case '2':
+          return meb;
+        default:
+          return pq;
+      }
+    })();
+    const newNew = (() => {
+      switch (chassisProtocol) {
+        case '0':
+          return pq;
+        case '1':
+          return mqb;
+        case '2':
+          return meb;
+        default:
+          return mqb;
+      }
+    })();
+
     if (m.oldButtonId !== newOld || m.newLinButtonId !== newNew) {
       updated++;
       if (!dryRun) {
@@ -1248,11 +1274,11 @@ async function saveSetup() {
     // direction from it gives a random sign.
     linRotaryByteIndex: (document.getElementById("linRotaryByteIndex").value.trim() === "")
       ? 3 : clamp(num(document.getElementById("linRotaryByteIndex").value), 0, 8),
-    wheelProtocol: Number(document.getElementById("wheelProtocol").value) === 1 ? 1 : 0,
+    wheelProtocol: Number(document.getElementById("wheelProtocol").value) || 0,
     mqbActByte1: parseHexByte("mqbActByte1", 0xFF),
     mqbActByte2: parseHexByte("mqbActByte2", 0x00),
     mqbActByte3: parseHexByte("mqbActByte3", 0x00),
-    chassisProtocol: Number(document.getElementById("chassisProtocol").value) === 0 ? 0 : 1,
+    chassisProtocol: Number(document.getElementById("chassisProtocol").value) || 1,
     charismaMode: Number(document.getElementById("charismaMode").value) || 0,
     charismaButtonBit: Number(document.getElementById("charismaButtonBit").value) || 22,
     charismaProgramCount: clamp(num(document.getElementById("charismaProgramCount").value), 2, 15) || 4,
