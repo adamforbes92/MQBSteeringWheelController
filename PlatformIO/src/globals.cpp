@@ -77,7 +77,7 @@ ButtonMapping buttonMappings[kMaxButtonMappings] = {
     {"OK",                 0x28, 0x28, 1,    1, 0},   // byte 1 bit 1   (MQB was 0x07, verified)
     {"Volume +",            0x06, 0x06, 1,    2, 20},  // byte 1 bit 2   (MQB was 0x10, verified)
     {"Volume -",            0x07, 0x07, 1,    3, 10},  // no CAN output  (MQB was 0x11, verified)
-    {"Voice/Mic ACC",      0x2B, 0x2B, 1,    4, 0},   // no CAN output  (MQB was 0x0C, unverified)
+    {"Voice/Mic ACC",      0x2B, 0x2B, 1,    4, 0},   // no CAN output  (MQB was 0x0C, verified)
     {"Voice/Mic ACC2",     0x42, 0x42, 1,    5, 0},   // no CAN output  (MQB was 0x0C, unverified)
     {"Paddle +",  0x1E, 0x1E, 1,    6, 0},   // no CAN output  (MQB was 0x00 -- never had a code at all)
     {"Paddle -", 0x1F, 0x1F, 1,    7, 0},   // no CAN output  (MQB was 0x00 -- never had a code at all)
@@ -326,12 +326,12 @@ void loadPreferences() {
   linRotaryByteIndex    = preferences.getUChar("linRotByte",  linRotaryByteIndex);
   if (linRotaryByteIndex > 8) linRotaryByteIndex = 8;  // 8 = rotary disabled
   wheelProtocol         = preferences.getUChar("wheelProto",  wheelProtocol);
-  if (wheelProtocol > WHEEL_PROTOCOL_MQB) wheelProtocol = WHEEL_PROTOCOL_PQ;
+  if (wheelProtocol > WHEEL_PROTOCOL_MEB) wheelProtocol = WHEEL_PROTOCOL_PQ;
   mqbActByte1           = preferences.getUChar("mqbAct1",     mqbActByte1);
   mqbActByte2           = preferences.getUChar("mqbAct2",     mqbActByte2);
   mqbActByte3           = preferences.getUChar("mqbAct3",     mqbActByte3);
   chassisProtocol       = preferences.getUChar("chassisProto", chassisProtocol);
-  if (chassisProtocol > CHASSIS_PROTOCOL_MQB) chassisProtocol = CHASSIS_PROTOCOL_MQB;
+  if (chassisProtocol > CHASSIS_PROTOCOL_MEB) chassisProtocol = CHASSIS_PROTOCOL_MQB;
   charismaMode          = preferences.getUChar("chaMode",     charismaMode);
   if (charismaMode > CHARISMA_MODE_MAX) charismaMode = CHARISMA_MODE_OFF;
   charismaButtonBit     = preferences.getUChar("chaBtnBit",   charismaButtonBit);
