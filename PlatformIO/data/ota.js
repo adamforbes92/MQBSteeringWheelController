@@ -33,11 +33,46 @@
   // ---------------------------------------------------------------------------
   // Device info + release-channel config
   // ---------------------------------------------------------------------------
-  let cfg = { repo: "", branch: "main", releasesDir: "Releases", product: "", version: "" };
+  let cfg = { repo: "", branch: "main", releasesDir: "Releases", product: "", version: "", boardId: "esp32" };
   let installedVersion = "";
   let mirrors = [];
   let dirApi = "";
   let releasesBase = "";
+
+  // Board variants (products that ship more than one PCB from one codebase).
+  // Each board has its own release folder, written by tools/make_release.py:
+  // V<ver>/ for the classic ESP32 (DevKit) boards, V<ver>-<SUFFIX>/ for the
+  // others (V5.01-S3/, V1.08-C3/). releases.json carries per-board images under
+  // "boards": {"esp32": {...}, "esp32s3": {...}}; the top-level firmware/
+  // filesystem are only ever the classic-ESP32 images. Older UIs in the field
+  // read nothing else and their folder pattern doesn't match a suffixed folder,
+  // so a DevKit unit is never offered another chip's image.
+  const BOARD_SUFFIX = { esp32: "", esp32s2: "S2", esp32s3: "S3", esp32c3: "C3", esp32c6: "C6", esp32h2: "H2" };
+  // esp_image_header_t.chip_id (bytes 12-13 of firmware.bin) for each board id
+  const BOARD_CHIP = { esp32: 0x0000, esp32s2: 0x0002, esp32c3: 0x0005, esp32s3: 0x0009, esp32c6: 0x000D, esp32h2: 0x0010 };
+  const CHIP_NAME = { 0x0000: "ESP32 (DevKit)", 0x0002: "ESP32-S2", 0x0005: "ESP32-C3", 0x0009: "ESP32-S3", 0x000C: "ESP32-C2", 0x000D: "ESP32-C6", 0x0010: "ESP32-H2" };
+  const chipName = (id) => CHIP_NAME[id] || ("chip id " + id);
+  const boardSuffix = () => (BOARD_SUFFIX[cfg.boardId] !== undefined ? BOARD_SUFFIX[cfg.boardId] : cfg.boardId.replace(/^esp32/i, "")).toUpperCase();
+  function imagesFor(r) {
+    if (!r) return null;
+    if (r.boards && r.boards[cfg.boardId] && r.boards[cfg.boardId].firmware && r.boards[cfg.boardId].filesystem) return r.boards[cfg.boardId];
+    if (cfg.boardId === "esp32" && r.firmware && r.filesystem) return { firmware: r.firmware, filesystem: r.filesystem };
+    return null;
+  }
+
+  // Refuse a firmware.bin built for another chip (the S3 build of a product on
+  // its DevKit board, or the reverse) before anything is flashed. The device
+  // refuses it too, but by then a guided update has already replaced the web UI.
+  // esp_image_header_t: magic 0xE9 at byte 0, chip_id (uint16 LE) at bytes 12-13.
+  async function checkFirmwareChip(blob) {
+    const want = BOARD_CHIP[cfg.boardId];
+    if (want === undefined) return;
+    const b = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+    if (b.length < 16 || b[0] !== 0xE9) throw new Error("That file is not an ESP32 firmware image - pick firmware.bin from the release folder.");
+    const got = b[12] | (b[13] << 8);
+    if (got !== want) throw new Error("That firmware is built for " + chipName(got) + ", but this controller is " + chipName(want) + ". Nothing was flashed. Use the release for this board: " +
+      (boardSuffix() ? "the V<version>-" + boardSuffix() + " folder." : "the plain V<version> folder (not a -S3 / -C3 one)."));
+  }
 
   const set = (id, v) => { const e = $(id); if (e) e.textContent = (v === undefined || v === null || v === "") ? "--" : v; };
 
@@ -47,6 +82,7 @@
     cfg.releasesDir = (info.releasesDir || "Releases").replace(/^\/+|\/+$/g, "");
     cfg.product = info.product || "";
     cfg.version = info.version || "";
+    cfg.boardId = info.boardId || "esp32";
     installedVersion = cfg.version;
     mirrors = cfg.repo ? [
       { name: "GitHub", base: "https://raw.githubusercontent.com/" + cfg.repo + "/" + cfg.branch + "/" + cfg.releasesDir + "/" },
@@ -87,9 +123,10 @@
       applyCfg(i);
       set("otaFwVersion", i.version);
       set("otaFsVersion", i.fsVersion && i.fsVersion !== "--" ? i.fsVersion : (i.version ? i.version + " (assumed)" : "--"));
-      set("otaBoard", i.board);
+      const boardText = i.boardName ? i.boardName + " — " + i.board : i.board;
+      set("otaBoard", boardText);
       set("otaPartition", i.partition);
-      set("otaHardware", i.board);
+      set("otaHardware", boardText);
       set("updInstalled", i.version ? "v" + i.version : "--");
       const repoEl = $("updRepo");
       if (repoEl) repoEl.textContent = cfg.repo ? cfg.repo + " / " + cfg.releasesDir : "no release channel configured";
@@ -169,7 +206,7 @@
       if (wrap) wrap.hidden = false;
       pct(0);
       setStatus("Uploading " + type + "…");
-      uploadBlob(type, file, file.name, pct).then(() => {
+      (type === "firmware" ? checkFirmwareChip(file) : Promise.resolve()).then(() => uploadBlob(type, file, file.name, pct)).then(() => {
         pct(1);
         markDone(type);
         if (type === "filesystem") {
@@ -276,7 +313,8 @@
   // ---------------------------------------------------------------------------
   // Card 1: Update from GitHub (guided)
   // ---------------------------------------------------------------------------
-  const FOLDER_RE = /^V(\d+(?:\.\d+)*)$/i;
+  // V<ver> (classic ESP32) or V<ver>-<SUFFIX> (another board, e.g. V5.01-S3)
+  const FOLDER_RE = /^V(\d+(?:\.\d+)*)(?:-([A-Za-z0-9]+))?$/i;
 
   async function waitForReboot(onPct) {
     const t0 = Date.now();
@@ -306,7 +344,7 @@
     const resetSteps = () => document.querySelectorAll("#updSteps .ota-step").forEach((el) => el.classList.remove("active", "done"));
     const goBridge = (ev) => { if (ev) ev.preventDefault(); const c = $("otaWifiStaCard"); if (c) { c.scrollIntoView({ behavior: "smooth", block: "start" }); const i = $("otaWifiStaSsidInput"); if (i) setTimeout(() => i.focus(), 400); } };
 
-    const candidates = () => (index && Array.isArray(index.releases)) ? index.releases.filter((r) => r && r.ota && r.firmware && r.filesystem) : [];
+    const candidates = () => (index && Array.isArray(index.releases)) ? index.releases.filter((r) => r && r.ota && imagesFor(r)) : [];
     const selected = () => candidates().find((r) => r.version === sel.value) || null;
 
     function renderNotes() {
@@ -335,6 +373,7 @@
       picker.hidden = list.length === 0;
       if (!list.length) {
         if (!all && candidates().length) setStatus("Nothing newer than the installed version. Tick “Show beta / older versions” to roll back.");
+        else if (index && Array.isArray(index.releases) && index.releases.length) setStatus("Releases are published, but none carries images for this board (" + cfg.boardId + "). Use “Update from Files” below.", "error");
         else setStatus("No installable releases listed. Use “Update from Files” below.", "error");
         return;
       }
@@ -342,18 +381,34 @@
       renderNotes();
     }
 
-    // Fold the GitHub folder listing into the index: a folder the index doesn't
-    // know is offered anyway (no notes); an index entry with no folder is
-    // dropped since its downloads would 404.
+    // Fold the GitHub folder listing into the index: a folder for THIS board
+    // that the index doesn't list is offered anyway (no notes); an index entry
+    // whose folder isn't there is dropped since its downloads would 404.
     function mergeSources(idx, dirs) {
       const byVer = {};
       if (idx && Array.isArray(idx.releases)) idx.releases.forEach((r) => { if (r && r.version) byVer[r.version] = r; });
       if (dirs) {
-        dirs.forEach((v) => { if (!byVer[v]) byVer[v] = { version: v, channel: "stable", ota: true, unindexed: true, notes: "Not in the release index yet - no release notes.", firmware: { path: "V" + v + "/firmware.bin" }, filesystem: { path: "V" + v + "/littlefs.bin" } }; });
-        Object.keys(byVer).forEach((v) => { if (dirs.indexOf(v) < 0) delete byVer[v]; });
+        const names = dirs.map((d) => d.name.toUpperCase());
+        dirs.forEach((d) => {
+          if (d.suffix !== boardSuffix()) return;
+          const known = byVer[d.version];
+          if (known && imagesFor(known)) return;
+          const guess = { firmware: { path: d.name + "/firmware.bin" }, filesystem: { path: d.name + "/littlefs.bin" } };
+          const entry = known ? Object.assign({}, known, { boards: Object.assign({}, known.boards) })
+                              : { version: d.version, channel: "stable", ota: true, notes: "Not in the release index yet - no release notes.", boards: {} };
+          entry.unindexed = true;
+          entry.boards[cfg.boardId] = guess;
+          if (cfg.boardId === "esp32") { entry.firmware = guess.firmware; entry.filesystem = guess.filesystem; }
+          byVer[d.version] = entry;
+        });
+        Object.keys(byVer).forEach((v) => {
+          const imgs = imagesFor(byVer[v]);
+          const path = imgs ? String(imgs.firmware.path || "") : "";
+          if (!imgs || (!/^https?:\/\//i.test(path) && names.indexOf(path.split("/")[0].toUpperCase()) < 0)) delete byVer[v];
+        });
       }
       const releases = Object.keys(byVer).map((v) => byVer[v]).sort((a, b) => cmpVer(b.version, a.version));
-      const stable = releases.filter((r) => r.ota && r.firmware && r.filesystem && r.channel !== "beta");
+      const stable = releases.filter((r) => r.ota && imagesFor(r) && r.channel !== "beta");
       return { releases, latest: stable.length ? stable[0].version : (releases.length ? releases[0].version : "") };
     }
 
@@ -377,7 +432,7 @@
         const arr = await res.json();
         if (!Array.isArray(arr)) return { reached: "GitHub API returned an unexpected listing" };
         const dirs = [];
-        arr.forEach((e) => { const m = e && e.type === "dir" && FOLDER_RE.exec(e.name || ""); if (m) dirs.push(m[1]); });
+        arr.forEach((e) => { const m = e && e.type === "dir" && FOLDER_RE.exec(e.name || ""); if (m) dirs.push({ name: e.name, version: m[1], suffix: (m[2] || "").toUpperCase() }); });
         return { dirs };
       } catch (e) { return { netErr: "GitHub API: " + (e && e.name === "AbortError" ? "timed out" : (e && e.message ? e.message : "unreachable")) }; }
     }
@@ -451,7 +506,9 @@
 
     // streamed download with progress; returns a Blob
     async function download(rel, part, stepId) {
-      const info = rel[part];
+      const imgs = imagesFor(rel);
+      if (!imgs) throw new Error("v" + rel.version + " has no " + part + " image for this board (" + cfg.boardId + ").");
+      const info = imgs[part];
       const url = /^https?:\/\//i.test(info.path) ? info.path : releasesBase + info.path;
       setStep(stepId, "active");
       setStatus("Downloading " + part + " (v" + rel.version + ")…");
@@ -504,8 +561,15 @@
         const safe = await fetchJson("/api/ota/check");
         if (!safe || !safe.allowed) throw new Error("Blocked: " + ((safe && safe.reason) || "device not in a safe state for an update."));
 
+        // Both images are downloaded and the firmware's chip checked BEFORE the
+        // device is touched: a dropped connection or a wrong-board image then
+        // leaves the controller exactly as it was.
         stage = "dlfs";
         const fsBlob = await download(rel, "filesystem", "dlfs");
+        stage = "dlfw";
+        const fwBlob = await download(rel, "firmware", "dlfw");
+        await checkFirmwareChip(fwBlob);
+
         stage = "fs";
         await flash(fsBlob, "filesystem", "fs");
 
@@ -517,8 +581,6 @@
         if (fsi.fsVersion && fsi.fsVersion !== "--" && fsi.fsVersion !== rel.version) throw new Error("Web UI reports v" + fsi.fsVersion + ", expected v" + rel.version + ". Retry the update.");
         setStep("verify", "done");
 
-        stage = "dlfw";
-        const fwBlob = await download(rel, "firmware", "dlfw");
         stage = "fw";
         await flash(fwBlob, "firmware", "fw");
 

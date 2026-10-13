@@ -343,7 +343,32 @@ static void shapeFrameForChassis(uint8_t* frame)
 static void captureLearned(uint8_t value, uint8_t byteIdx, int8_t rotary)
 {
   expireLearnState();
-  if (!learnActive || learnRowIndex >= buttonMappingCount)
+  if (!learnActive)
+  {
+    return;
+  }
+
+  // Wizard capture: hand the result to the UI and leave the table alone. The
+  // sign is reported as-is — the wizard knows which way it asked for, so a +1
+  // needs no disambiguating here (see the note below for why Learn does).
+  if (learnTarget == LEARN_PROBE)
+  {
+    if (isRollerDelta(rotary))
+    {
+      markRollerCode(value);
+    }
+    portENTER_CRITICAL(&stateMux);
+    learnProbeCode = value;
+    learnProbeByte = byteIdx;
+    learnProbeRotary = rotary;
+    learnProbeSeq++;
+    portEXIT_CRITICAL(&stateMux);
+    logLine("[SW] learn probe: code 0x%02X byte %u d=%+d", value, (unsigned)byteIdx, (int)rotary);
+    clearLearnState();
+    return;
+  }
+
+  if (learnRowIndex >= buttonMappingCount)
   {
     return;
   }

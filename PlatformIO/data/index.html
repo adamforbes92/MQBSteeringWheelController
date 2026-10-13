@@ -8,7 +8,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="style.css?v=1.06">
+  <link rel="stylesheet" href="style.css?v=1.08">
 </head>
 
 <body>
@@ -368,6 +368,41 @@
           <input id="importSettingsFile" type="file" accept="application/json,.json" hidden>
         </div>
       </article>
+
+      <!-- Scroll-wheel wizard: learns up / down / press without touching the
+           table, then replaces the learned row with one row per movement. -->
+      <div id="scrollWizard" class="wiz-overlay" hidden>
+        <div class="wiz-box" role="dialog" aria-labelledby="wizTitle">
+          <h3 id="wizTitle">Scroll wheel setup</h3>
+          <p id="wizIntro" class="wiz-intro"></p>
+          <label class="wiz-name">Row name
+            <input id="wizName" type="text" maxlength="17">
+          </label>
+          <div class="wiz-steps">
+            <div class="wiz-step" data-step="up">
+              <span class="wiz-label">Scroll UP one click</span>
+              <span class="wiz-state" id="wizStateUp">--</span>
+              <button class="btn tiny secondary" data-wiz-learn="up" type="button">Learn</button>
+            </div>
+            <div class="wiz-step" data-step="down">
+              <span class="wiz-label">Scroll DOWN one click</span>
+              <span class="wiz-state" id="wizStateDown">--</span>
+              <button class="btn tiny secondary" data-wiz-learn="down" type="button">Learn</button>
+            </div>
+            <div class="wiz-step" data-step="press">
+              <span class="wiz-label">Press the wheel <em>(optional)</em></span>
+              <span class="wiz-state" id="wizStatePress">--</span>
+              <button class="btn tiny secondary" data-wiz-learn="press" type="button">Learn</button>
+              <button class="btn tiny secondary" id="wizSkipPress" type="button">Skip</button>
+            </div>
+          </div>
+          <div id="wizPrompt" class="wiz-prompt"></div>
+          <div class="button-row">
+            <button id="wizAddBtn" class="btn primary" type="button" disabled>Add rows</button>
+            <button id="wizCancelBtn" class="btn secondary" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section id="tab-diag" class="panel">
@@ -561,9 +596,9 @@
         </div>
         <div class="ota-steps" id="updSteps">
           <div class="ota-step" data-step="dlfs"><span class="ota-step-num">1</span> Get UI</div>
-          <div class="ota-step" data-step="fs"><span class="ota-step-num">2</span> Flash UI</div>
-          <div class="ota-step" data-step="verify"><span class="ota-step-num">3</span> Verify</div>
-          <div class="ota-step" data-step="dlfw"><span class="ota-step-num">4</span> Get FW</div>
+          <div class="ota-step" data-step="dlfw"><span class="ota-step-num">2</span> Get FW</div>
+          <div class="ota-step" data-step="fs"><span class="ota-step-num">3</span> Flash UI</div>
+          <div class="ota-step" data-step="verify"><span class="ota-step-num">4</span> Verify</div>
           <div class="ota-step" data-step="fw"><span class="ota-step-num">5</span> Flash FW</div>
           <div class="ota-step" data-step="reboot"><span class="ota-step-num">6</span> Reboot</div>
         </div>
@@ -625,8 +660,8 @@
     </section>
   </main>
 
-  <script src="app.js?v=1.06"></script>
-  <script src="ota.js?v=1.06"></script>
+  <script src="app.js?v=1.08"></script>
+  <script src="ota.js?v=1.08"></script>
 </body>
 
 </html>

@@ -37,6 +37,8 @@ void setup() {
   ocfg.fwVersion = FW_VERSION;
   ocfg.product = "MFSW Controller";
   ocfg.githubRepo = "adamforbes92/MQBSteeringWheelController"; // Releases/ + releases.json for "Check for updates"
+  ocfg.boardId = MFSW_BOARD_ID;     // picks this board's images out of releases.json ("boards")
+  ocfg.boardName = MFSW_BOARD_NAME; // shown on the OTA tab
   otaManagerInit(&ocfg);
 
   wifiManagerInit(&wcfg);
@@ -51,6 +53,8 @@ void setup() {
   // disconnects, scales CPU 240->80 MHz, releases Bluetooth and kills the
   // onboard LED to cut current draw (and therefore linear-regulator heat).
   power_config_t pcfg = powerDefaultConfig();
+  pcfg.onboardLedPin = pinOnboardLed; // IO2 on both boards (the S3 board's own LED_ESP)
+  pcfg.ledActiveHigh = true;
   powerInit(&pcfg);
 
   startTasks(); // begin FreeRTOS tasks for LIN handling, CAN handling, and output control

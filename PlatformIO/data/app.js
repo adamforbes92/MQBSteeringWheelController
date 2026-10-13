@@ -72,7 +72,14 @@ async function mergeLearnedCodes() {
       // Save Setup, and the Trigger change that usually follows will flag it.
       renderMappings();
       setStatus("Learned code applied.");
-      offerRollerPartner(localLearnRow);
+    }
+    // A Learn that turned out to be a scroll wheel carries on in the wizard —
+    // once per Learn, whether or not the code differed from what was there,
+    // and only if it actually landed (a timed-out Learn leaves the revision).
+    const learnedRow = mappings[localLearnRow];
+    if (learnMayBeScroll && localLearnTarget === 1 && learnedRow && rowIsRoller(learnedRow) &&
+        seenMappingsRevision !== learnStartRevision) {
+      openScrollWizard(localLearnRow);
     }
   } catch (e) {}
 }
@@ -81,7 +88,7 @@ async function mergeLearnedCodes() {
 // A roller sends one code whichever way it turns, so it needs two rows: one
 // Scroll up, one Scroll down. The firmware marks a code as a roller the first
 // time it moves in a way no button can (see isRollerDelta() in globals.h);
-// these helpers use that to flag rows and add the missing half of a pair.
+// these helpers use that to flag rows, and the wizard below adds the rows.
 
 function defaultButtonByte() {
   const v = num(document.getElementById("linButtonByteIndex").value);
@@ -124,52 +131,266 @@ function dirWord(dir) {
 
 const MAX_MAPPING_ROWS = 24;  // kMaxButtonMappings in defs.h
 
-function applyRollerFix(idx) {
-  const fix = rollerFix(idx);
-  if (!fix) return false;
-  if (mappings.length >= MAX_MAPPING_ROWS) {
-    alert(`The table is full (${MAX_MAPPING_ROWS} rows) — delete a row to add the other scroll direction.`);
-    return false;
-  }
-  const row = mappings[idx];
-  let partnerDir = fix.dir;
-  if (fix.kind === "split") {
-    row.flags = (num(row.flags) & ~TRIGGER_MASK) | FLAG_ROTARY_UP;
-    partnerDir = FLAG_ROTARY_DOWN;
-  }
-  // The partner shares the code and the LIN output code (the direction rides
-  // in the scroll byte, which is passed through). CAN, resistive and the
-  // action columns are left empty: the other direction almost always wants a
-  // different one, and copying them would make both directions do the same.
-  const base = String(row.name || "Scroll").slice(0, 17);
-  mappings.splice(idx + 1, 0, {
-    name: `${base} ${dirWord(partnerDir)}`,
-    oldButtonId: num(row.oldButtonId),
-    newLinButtonId: num(row.newLinButtonId),
-    canByteIndex: 255,
-    canBitIndex: 0,
-    resistiveOhm: 0,
-    flags: partnerDir,
-    openHaldexMode: 0,
-    sourceByte: num(row.sourceByte),
-  });
-  renderMappings();
-  // Saved straight away, as Add Row does: the firmware addresses Learn by row
-  // index, and inserting a row shifts every index below it.
-  saveSetup();
-  return true;
+function hexCode(c) {
+  return "0x" + num(c).toString(16).toUpperCase().padStart(2, "0");
 }
 
-function offerRollerPartner(idx) {
-  const fix = rollerFix(idx);
-  if (!fix || fix.kind !== "add") return;
+// ---- Scroll-wheel wizard ---------------------------------------------------
+// Adding the partner row while the user was still mid-Learn shifted row
+// indices under the firmware, which addresses Learn by index, and the new row
+// often did not take. So the wizard learns every movement first with probe
+// Learns (target 4: the firmware reports what it saw and writes no row), and
+// only then replaces the row with one row per movement, in a single save.
+
+const LEARN_PROBE = 4;
+const PROBE_WINDOW_MS = 10000;  // kLearnProbeWindowMs in defs.h
+const WIZ_PROMPT = {
+  up: "Scroll the wheel UP one click",
+  down: "Scroll the wheel DOWN one click",
+  press: "Press the wheel in",
+};
+
+let wiz = null;           // open wizard, null when closed
+let lastProbeSeq = null;  // firmware's learnProbeSeq as of the last status poll
+
+function openScrollWizard(idx) {
   const row = mappings[idx];
-  const code = num(row.oldButtonId).toString(16).toUpperCase().padStart(2, "0");
-  const ok = confirm(
-    `Row ${idx + 1} (code 0x${code}) is a scroll wheel, learned as Scroll ${dirWord(rowDirection(row))}.\n\n` +
-    `Add the matching Scroll ${dirWord(fix.dir)} row below it?`
-  );
-  if (ok) applyRollerFix(idx);
+  if (!row || wiz) return;
+  // The wizard owns this row from here: stop the Learn backstop merging into
+  // it once the rows have been replaced.
+  clearTimeout(learnBackstopTimer);
+  learnMayBeScroll = false;
+  localLearnRow = -1;
+  localLearnUntil = 0;
+
+  const dir = rowDirection(row);
+  wiz = {
+    idx,
+    row: { ...row },
+    code: num(row.oldButtonId),
+    // The movement the row was just learned with counts — no need to repeat it.
+    up: dir === FLAG_ROTARY_UP,
+    down: dir === FLAG_ROTARY_DOWN,
+    press: null,
+    pressSkipped: false,
+    armed: null,
+    until: 0,
+    baseSeq: null,
+    note: "",
+  };
+  const name = String(row.name || "").replace(/\s+(up|down|press)$/i, "");
+  document.getElementById("wizName").value =
+    (!name || name === "New Button" ? "Scroll" : name).slice(0, 17);
+  document.getElementById("wizIntro").textContent =
+    `Row ${idx + 1} is on scroll wheel ${hexCode(wiz.code)}. Teach it each movement below. ` +
+    `Nothing changes until you press Add rows, which replaces row ${idx + 1} with one row per movement.`;
+  document.getElementById("scrollWizard").hidden = false;
+  renderWizard();
+  armNextWizardStep();
+}
+
+function closeScrollWizard() {
+  if (wiz && wiz.armed) fetch("/api/learn/cancel", { method: "POST" }).catch(() => {});
+  wiz = null;
+  document.getElementById("scrollWizard").hidden = true;
+}
+
+async function armWizardStep(step) {
+  if (!wiz) return;
+  try {
+    const res = await fetch("/api/learn/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rowIndex: 0, target: LEARN_PROBE }),
+    });
+    if (!res.ok) throw new Error("the device refused it — is the firmware up to date?");
+  } catch (err) {
+    if (wiz) {
+      wiz.armed = null;
+      wiz.note = `Couldn't start learning: ${err.message}`;
+      renderWizard();
+    }
+    return;
+  }
+  if (!wiz) return;  // closed while the request was out
+  wiz.armed = step;
+  wiz.baseSeq = lastProbeSeq;
+  wiz.until = Date.now() + PROBE_WINDOW_MS;
+  renderWizard();
+}
+
+// Up, then down, then press; nothing armed once each is learned or skipped.
+function armNextWizardStep() {
+  const next = !wiz.up ? "up" : !wiz.down ? "down"
+    : (!wiz.press && !wiz.pressSkipped) ? "press" : null;
+  if (next) {
+    armWizardStep(next);
+  } else {
+    wiz.armed = null;
+    renderWizard();
+  }
+}
+
+// Called from every status poll.
+function updateWizardFromStatus(s) {
+  if (typeof s.learnProbeSeq !== "number") return;
+  lastProbeSeq = s.learnProbeSeq;
+  if (!wiz || !wiz.armed) return;
+  if (wiz.baseSeq === null) wiz.baseSeq = s.learnProbeSeq;
+
+  if (s.learnProbeSeq !== wiz.baseSeq) {
+    const step = wiz.armed;
+    wiz.armed = null;
+    onWizardCapture(step, num(s.learnProbeCode), num(s.learnProbeByte), num(s.learnProbeRotary));
+    return;
+  }
+  if (!s.learnActive && Date.now() > wiz.until) {
+    wiz.armed = null;
+    wiz.note = "Nothing heard — press Learn to try again.";
+  }
+  renderWizard();
+}
+
+function onWizardCapture(step, code, byte, rotary) {
+  wiz.note = "";
+  if (step === "press") {
+    if (code === wiz.code) {
+      // Same code as the scroll: a press's first frame reads as one click up,
+      // so a row for it would also fire on every Scroll up.
+      wiz.press = null;
+      wiz.pressSkipped = true;
+      wiz.note = `The press sends the scroll code (${hexCode(code)}), so it can't have a row of its own. Skipped.`;
+    } else {
+      wiz.press = { code, byte };
+    }
+  } else if (code !== wiz.code) {
+    wiz.note = `Heard ${hexCode(code)}, not the scroll wheel (${hexCode(wiz.code)}). Try again.`;
+  } else if (rotary === 0) {
+    wiz.note = "The wheel code came in without any movement. Try again.";
+  } else {
+    // Whichever way it actually turned is what gets learned; the step still
+    // asked for stays armed below.
+    const turned = rotary > 0 ? "up" : "down";
+    wiz[turned] = true;
+    if (turned !== step) {
+      wiz.note = `That was a ${turned.toUpperCase()} scroll — kept as ${turned === "up" ? "Up" : "Down"}.`;
+    }
+  }
+  renderWizard();
+  armNextWizardStep();
+}
+
+function renderWizard() {
+  if (!wiz) return;
+  const learned = {
+    up: wiz.up ? `Up Learned (${hexCode(wiz.code)})` : "Not learned",
+    down: wiz.down ? `Down Learned (${hexCode(wiz.code)})` : "Not learned",
+    press: wiz.press ? `Pressed Learned (${hexCode(wiz.press.code)})`
+      : wiz.pressSkipped ? "Skipped" : "Not learned",
+  };
+  for (const step of ["up", "down", "press"]) {
+    const el = document.querySelector(`.wiz-step[data-step="${step}"]`);
+    el.classList.toggle("armed", wiz.armed === step);
+    el.classList.toggle("done", !!wiz[step]);
+    const id = `wizState${step[0].toUpperCase()}${step.slice(1)}`;
+    setText(id, wiz.armed === step ? "Listening…" : learned[step]);
+  }
+
+  let prompt;
+  if (wiz.armed) {
+    const sec = Math.max(0, Math.ceil((wiz.until - Date.now()) / 1000));
+    prompt = `${WIZ_PROMPT[wiz.armed]} now… ${sec}s`;
+  } else if (wiz.up && wiz.down) {
+    prompt = wiz.press || wiz.pressSkipped
+      ? "All learned — press Add rows."
+      : "Press Learn on the last step to add a press row, or Add rows without one.";
+  } else {
+    prompt = "";
+  }
+  setText("wizPrompt", [wiz.note, prompt].filter(Boolean).join(" "));
+
+  const n = 2 + (wiz.press ? 1 : 0);
+  const add = document.getElementById("wizAddBtn");
+  add.disabled = !(wiz.up && wiz.down);
+  add.textContent = `Add ${n} rows`;
+}
+
+function finishScrollWizard() {
+  if (!wiz || !wiz.up || !wiz.down) return;
+  const { idx, row, code } = wiz;
+  const rowCount = 2 + (wiz.press ? 1 : 0);
+  if (mappings.length - 1 + rowCount > MAX_MAPPING_ROWS) {
+    alert(`That needs ${rowCount} rows and the table holds ${MAX_MAPPING_ROWS} — delete a row first.`);
+    return;
+  }
+  if (!mappings[idx] || num(mappings[idx].oldButtonId) !== code) {
+    alert("The button table changed while the wizard was open — nothing was added.");
+    closeScrollWizard();
+    return;
+  }
+
+  const base = (document.getElementById("wizName").value.trim() || "Scroll").slice(0, 17);
+  const sameProtocol =
+    document.getElementById("wheelProtocol").value === document.getElementById("chassisProtocol").value;
+  const blank = { canByteIndex: 255, canBitIndex: 0, resistiveOhm: 0, openHaldexMode: 0 };
+  // Both directions share the LIN output code: the direction rides in the
+  // scroll byte, which is passed through.
+  const scrollOut = num(row.newLinButtonId) || (sameProtocol ? code : 0);
+  // The replaced row's outputs (CAN, MOSFET, latch...) carry over to the
+  // direction it was learned as — Up if it fired either way. The other rows
+  // start empty: the other direction almost always wants a different action.
+  const keepDir = rowDirection(row) === FLAG_ROTARY_DOWN ? FLAG_ROTARY_DOWN : FLAG_ROTARY_UP;
+  const scrollRow = (dir) => {
+    const name = `${base} ${dirWord(dir)}`;
+    if (dir === keepDir) {
+      return { ...row, name, newLinButtonId: scrollOut, flags: (num(row.flags) & ~TRIGGER_MASK) | dir };
+    }
+    return { ...blank, name, oldButtonId: code, newLinButtonId: scrollOut, flags: dir, sourceByte: num(row.sourceByte) };
+  };
+  const rows = [scrollRow(FLAG_ROTARY_UP), scrollRow(FLAG_ROTARY_DOWN)];
+  if (wiz.press) {
+    rows.push({
+      ...blank,
+      name: `${base} press`,
+      oldButtonId: wiz.press.code,
+      newLinButtonId: sameProtocol ? wiz.press.code : 0,
+      flags: 0,
+      sourceByte: wiz.press.byte,
+    });
+  }
+
+  closeScrollWizard();
+  mappings.splice(idx, 1, ...rows);
+  renderMappings();
+  // Indices only move now, with no Learn armed, and the device gets the whole
+  // set in one go.
+  saveSetup();
+  setStatus(`Scroll wheel ${hexCode(code)}: row ${idx + 1} replaced with ${rows.length} rows.`);
+}
+
+function wireScrollWizard() {
+  document.querySelectorAll("[data-wiz-learn]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!wiz) return;
+      const step = btn.dataset.wizLearn;
+      wiz.note = "";
+      if (step === "press") wiz.pressSkipped = false;
+      armWizardStep(step);
+    });
+  });
+  document.getElementById("wizSkipPress").addEventListener("click", () => {
+    if (!wiz) return;
+    if (wiz.armed === "press") {
+      fetch("/api/learn/cancel", { method: "POST" }).catch(() => {});
+      wiz.armed = null;
+    }
+    wiz.press = null;
+    wiz.pressSkipped = true;
+    wiz.note = "";
+    renderWizard();
+  });
+  document.getElementById("wizAddBtn").addEventListener("click", finishScrollWizard);
+  document.getElementById("wizCancelBtn").addEventListener("click", closeScrollWizard);
 }
 
 async function forgetRollerCodes() {
@@ -187,6 +408,9 @@ let pollTimer = null;
 let localLearnUntil = 0;
 let localLearnRow = -1;
 let localLearnTarget = 0;
+let learnMayBeScroll = false;  // a Button Ori Learn whose result may open the scroll wizard
+let learnBackstopTimer = null;
+let learnStartRevision = null;  // mappingsRevision when that Learn was armed
 
 // OpenHaldex mode names, indexed 0-5; 255 = "Push-to-Next".
 const OH_MODE_NAMES = ["Stock", "FWD", "50:50", "60:40", "75:25", "Expert"];
@@ -404,6 +628,7 @@ function wireControls() {
 
   document.getElementById("saveSetupBtn").addEventListener("click", saveSetup);
   document.getElementById("forgetRollersBtn").addEventListener("click", forgetRollerCodes);
+  wireScrollWizard();
   document.getElementById("learnAuxDimBtn").addEventListener("click", () => learnAuxLimit("dim"));
   document.getElementById("learnAuxBrightBtn").addEventListener("click", () => learnAuxLimit("bright"));
 
@@ -999,6 +1224,7 @@ async function loadStatus() {
       }
     }
 
+    updateWizardFromStatus(s);
     updateLearnBannerFromStatus(s);
   } catch (err) {
     updateLearnBannerFromStatus(null);
@@ -1012,6 +1238,12 @@ function updateLearnBannerFromStatus(status) {
   }
 
   const now = Date.now();
+
+  if (status && status.learnActive && status.learnTarget === LEARN_PROBE) {
+    el.classList.add("active");
+    el.textContent = "Scroll wheel setup is listening for the wheel.";
+    return;
+  }
 
   if (status && status.learnActive) {
     const sec = Math.max(0, Math.ceil((status.learnMsRemaining || 0) / 1000));
@@ -1080,13 +1312,13 @@ function renderMappings() {
     const trigWarn = fix && fix.kind === "split" ? ' class="warn-cell"' : "";
     const trigTitle = rowIsRoller(row)
       ? (fix && fix.kind === "split"
-        ? "Scroll wheel: this row fires both ways and only once per sweep. Split makes it Scroll up and adds a Scroll down row."
+        ? "Scroll wheel: this row fires both ways and only once per sweep. Split learns up, down and press, then replaces this row with one row each."
         : "Scroll wheel code — the trigger picks which way it turns.")
       : "When this row fires. A roller sends one code both ways, so use two rows: Scroll up and Scroll down. Short/Long split a held button: Short stops matching once the hold passes ~0.8 s, Long starts then — so one code can tap for one action and hold for another. Long press + Latch = toggle on hold.";
     const fixBtn = !fix ? ""
       : fix.kind === "split"
-        ? `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Make this row Scroll up and add a Scroll down row">Split &#9650;&#9660;</button>`
-        : `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Add the Scroll ${dirWord(fix.dir)} row for this wheel">+ ${fix.dir === FLAG_ROTARY_UP ? "&#9650;" : "&#9660;"} row</button>`;
+        ? `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Learn up, down and press, then replace this row with one row each">Split &#9650;&#9660;</button>`
+        : `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Learn the Scroll ${dirWord(fix.dir)} (and press) for this wheel and add their rows">+ ${fix.dir === FLAG_ROTARY_UP ? "&#9650;" : "&#9660;"} row</button>`;
 
     tr.innerHTML = `
       <td><input data-field="name" data-idx="${idx}" type="text" value="${escapeAttr(row.name || "")}"></td>
@@ -1122,7 +1354,7 @@ function renderMappings() {
   });
 
   tbody.querySelectorAll("button[data-roller-fix]").forEach((btn) => {
-    btn.addEventListener("click", () => applyRollerFix(Number(btn.dataset.rollerFix)));
+    btn.addEventListener("click", () => openScrollWizard(Number(btn.dataset.rollerFix)));
   });
 }
 
@@ -1212,6 +1444,8 @@ async function onLearnClick(event) {
     localLearnUntil = Date.now() + 5000;
     localLearnRow = idx;
     localLearnTarget = target;
+    learnMayBeScroll = target === 1;
+    learnStartRevision = seenMappingsRevision;
     updateLearnBannerFromStatus(null);
 
     setStatus("Learn started. Press a button within 5 seconds.");
@@ -1219,7 +1453,11 @@ async function onLearnClick(event) {
     // firmware reports it (mappingsRevision). One late merge as a backstop,
     // after the window has closed. Not loadSetup(): that replaces the whole
     // table and would discard any unsaved edits on other rows.
-    setTimeout(mergeLearnedCodes, 5500);
+    clearTimeout(learnBackstopTimer);
+    learnBackstopTimer = setTimeout(async () => {
+      await mergeLearnedCodes();
+      learnMayBeScroll = false;  // window over: later merges are not this Learn
+    }, 5500);
   } catch (err) {
     setStatus(`Learn error: ${err.message}`);
   }
