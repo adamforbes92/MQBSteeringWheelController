@@ -8,10 +8,16 @@ driver output** for switching a relay or light. An optional PWM **auxiliary ligh
 automatic backlight dimming (for MK4 chassis, etc), and everything is configured from a phone over **Wi-Fi** —
 no laptop or serial cable needed in the car.
 
-It runs on an **ESP32 DevKit V1 (WROOM-32)** under the Arduino framework, and uses the
+It runs under the Arduino framework on either of two PCBs from one codebase — the V1/V2
+boards with a plug-in **ESP32 DevKit V1 (WROOM-32)** (`pio run -e esp32dev`) or the S3 board
+with an **ESP32-S3-WROOM-1** soldered down, native USB-C and its own 3.3 V regulator
+(`pio run -e esp32-s3`) — and uses the
 [LIN_master_portable_Arduino](https://github.com/gicking/LIN_master_portable_Arduino)
 library for the LIN state machines, the ESP32 **TWAI** peripheral for CAN, and
-[X9C10X](https://github.com/RobTillaart/X9C10X) for the digital potentiometer.
+[X9C10X](https://github.com/RobTillaart/X9C10X) for the digital potentiometer. The board is
+picked at build time (`-DMFSW_BOARD_DEVKIT` / `-DMFSW_BOARD_S3`, see `include/board.h`);
+releases are packaged per board (`Releases/V<ver>/` for the DevKit, `Releases/V<ver>-S3/` for
+the S3) and the OTA tab only offers releases carrying images for the board it runs on.
 
 > The buttons are designed with a known-good PQ baseline that you re-learn to suit your wheel.
 
@@ -52,7 +58,7 @@ library for the LIN state machines, the ESP32 **TWAI** peripheral for CAN, and
 | Forced / source-select backlight | Choose Aux PWM, forced fixed %, or pass-through LIN brightness |
 | Learn mode | Capture a wheel's button IDs and aux duty limits directly from the live bus |
 | Wi-Fi UI | Dashboard, setup, button builder, diagnostics, OTA |
-| OTA updates | Flash new firmware from the browser over Wi-Fi |
+| OTA updates | Update from GitHub or by file upload on the OTA tab; Home Wi-Fi bridge mode; recovery page if the web UI is ever lost |
 | Bus health | Live CAN / LIN 1 / LIN 2 / resistive status in the UI |
 | Power management | Auto Wi-Fi-off + CPU reduction 1 min after the last client disconnects |
 | EEPROM | All settings and the button map stored to ESP32 Preferences |
@@ -98,15 +104,19 @@ the **LIN Monitor** while pressing them to find the frame and byte that change.
 
 Defined in [include/defs.h](include/defs.h):
 
-| Group | Signal | GPIO |
-| --- | --- | --- |
-| LIN 1 (wheel) | TX / RX | 17 / 16 |
-| LIN 2 (chassis) | TX / RX | 23 / 22 |
-| LIN 2 | Wake / CS | 18 / 19 |
-| CAN / TWAI | RX / TX | 13 / 14 |
-| Aux light | PWM input (input-only pin) | 39 |
-| Resistive pot (X9C10X) | UD / INC / CS | 25 / 26 / 27 |
-| High-side driver | Output ("High-Side MOSFET") | 21 |
+| Group | Signal | DevKit GPIO | S3 board GPIO |
+| --- | --- | --- | --- |
+| LIN 1 (wheel) | TX / RX | 17 / 16 | 17 / 16 |
+| LIN 2 (chassis) | TX / RX | 23 / 22 | 6 / 5 |
+| LIN 2 | Wake / CS (NSLP) | 18 / 19 | 18 / 15 |
+| CAN / TWAI | RX / TX | 13 / 14 | 13 / 14 |
+| Aux light | PWM input | 39 (input-only pin) | 7 |
+| Resistive pot (X9C10X) | UD / INC / CS | 25 / 26 / 27 | 9 / 10 / 11 |
+| High-side driver | Output ("High-Side MOSFET") | 21 | 21 |
+| Status LED | | 2 | 2 |
+| USB | D− / D+ | (DevKit's CH340) | 19 / 20 (native) |
+
+> **S3 board:** flash over the USB-C port (USB-Serial-JTAG, no driver, no button presses). If a firmware ever leaves USB dead, hold `BOOT`, tap `RESET`, then flash. The 16 MB flash uses `partitions_mqbsteeringwheelcontroller_16MB.csv`; the DevKit keeps its 4 MB table.
 
 ### Main Connector
 
@@ -326,7 +336,7 @@ PID/checksum bytes an independent recheck would need.
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved. Current firmware version: **1.04** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved. Current firmware version: **1.08** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -354,23 +364,23 @@ Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse
 
 *Setup: the whole General Setup card, top to bottom (left); Diagnostics: bus health tiles, the high-side test toggle and the resistive-output tools (right).*
 
-### Over-the-Air Updates (Two-Step)
+### Over-the-Air Updates
 
-Firmware and the web UI live on separate flash partitions, so an update on the **OTA** tab is done in two steps:
+Everything happens on the **OTA** tab; USB is only needed for the very first install, or if the web interface is ever lost.
 
-1. **Filesystem** — upload `littlefs.bin` (`POST /api/ota/fs`, written to the SPIFFS partition). Updates `index.html` / `app.js` / `style.css`; the device does **not** reboot after this step.
-2. **Firmware** — upload `firmware.bin` (`POST /api/ota`, written to the OTA app partition). Updates the application and reboots automatically once complete.
+- **Update from GitHub** — press **Check for updates**. The page reads the release list from [`adamforbes92/MQBSteeringWheelController`](https://github.com/adamforbes92/MQBSteeringWheelController) (`Releases/releases.json` plus the `V…` folders), shows *Installed* vs. *Latest* (older and beta releases sit behind a tick-box, for rolling back), then installs the selected version in six tracked steps: download and flash the web UI, verify it, download and flash the firmware, reboot. The browser needs internet *while it can still reach the controller* — join the controller to your router in the **Home WiFi (Bridge Mode)** card, put the phone on the same network and open the address the card shows (`http://mfsw.local/` works there too). On the controller's own access point alone most phones drop mobile data.
+- **Home WiFi (Bridge Mode)** — the controller joins a home or garage network as a station alongside its own access point. Scan or type the network name, save, and once it shows *Connected* the controller is reachable from that network as well. It tries hard for 20 s after boot, then once every 5 minutes, so a saved network can't disturb the access point when the car is parked away from home.
+- **Update from Files** — no internet needed: download `littlefs.bin` and `firmware.bin` from the newest `Releases/V…/` folder and upload them here, **Filesystem** (web UI) first, then **Firmware**. The device reboots after the firmware.
 
-The OTA tab's step tracker highlights the step in progress and marks each with a green checkmark as it completes. `GET /api/ota/info` reports the running version.
-
+Every upload is size-checked, and a filesystem image is verified by mounting it before the device reports success — a failed filesystem upload is wiped rather than left half-written. If the web interface is ever missing (a filesystem update that stopped part-way), the controller serves a **recovery page** at its address with the same two uploads and partition diagnostics, so it is never a USB job. Web assets are served `no-cache`, so a new UI is never hidden behind a stale copy in the phone's browser. `GET /api/ota/info` reports the firmware and web UI versions shown at the top of the tab; `GET /api/ota/check` gates updates on the device being in a safe state.
 
 <p align="center">
-  <img src="Images/ui-ota.png" alt="OTA tab — firmware info and two-step update" width="300">
+  <img src="Images/ui-ota.png" alt="OTA tab — Update from GitHub, Home WiFi bridge mode and Update from Files" width="300">
 </p>
 
 ### Status Indicators
 
-The Dashboard/Diagnostics header badges (`CAN: ...`, `Active Button: ...`) and the CAN/LIN/resistive health tiles are currently rendered as **plain text in the default accent colour** rather than colour-coded green/red — in this firmware build the healthy/unhealthy states aren't yet wired to the shared theme's green/orange/red pill classes, so read the text itself (e.g. "Healthy" / "No Data" / "Idle" / "Disabled") rather than relying on colour. The one place colour *is* live is the OTA step tracker above (teal = step in progress, green = step complete).
+The Dashboard/Diagnostics header badges (`CAN: ...`, `Active Button: ...`) and the CAN/LIN/resistive health tiles are currently rendered as **plain text in the default accent colour** rather than colour-coded green/red — in this firmware build the healthy/unhealthy states aren't yet wired to the shared theme's green/orange/red pill classes, so read the text itself (e.g. "Healthy" / "No Data" / "Idle" / "Disabled") rather than relying on colour. The one place colour *is* live is the OTA step trackers above (teal = step in progress, green = step complete).
 
 ---
 
@@ -383,6 +393,20 @@ Learn mode captures live values from the bus into a specific field:
   changes** (ignoring the rolling counter), so ordinary buttons (byte 1), **paddles**
   (byte 6) and the **horn** (byte 7) are all captured with their correct byte position and
   value. Learn windows time out after 5 seconds.
+- **Scroll wheels (rollers)** — a roller sends **one code whichever way it turns**, with the
+  direction and number of clicks in the scroll byte (byte 3), so it needs two rows: *Scroll up*
+  and *Scroll down*. Learn the original column by **scrolling the roller down one click**: a
+  plain button never reports a downward step, so this marks the code as a scroll wheel and
+  opens the **scroll wheel wizard**. The wizard asks you to scroll **up**, scroll **down** and
+  (optionally) **press** the wheel, confirming each with *Up Learned* / *Down Learned* /
+  *Pressed Learned* (the click you just learned with is already ticked). *Add rows* then
+  replaces the row with one row per movement — the original row's outputs move to the
+  direction it was learned as — and saves. *Cancel* leaves the table untouched. The
+  controller also spots a roller by itself the first time one is scrolled down in normal use
+  (listed under *Scroll wheels detected* on the Buttons tab), and any row on that code that
+  still fires *Any press* is flagged in the Trigger column with a **Split** button, which
+  opens the same wizard. *Forget* clears the detected list, e.g. after fitting a different
+  wheel.
 - **Aux duty limits** — with a PWM light signal present, *Learn Dim* / *Learn Bright*
   capture the current duty (in tenths of a percent) as the calibration endpoints.
 
@@ -579,15 +603,28 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
-Unreleased — Independent Chassis Protocol (PQ/MQB) for the chassis-bound button frame,
-        separate from Wheel Protocol, so any wheel↔chassis combination bridges; a
-        protocol-change prompt updates button rows still on a known PQ/MQB code and
-        leaves learned/customised rows alone; Dashboard "BCM" tile + raw BCM data,
-        independent of the active backlight source; LIN 2 health split into "any
-        transaction" vs "light frame specifically"; LIN Monitor CSV export; Passthru
-        Mode (relays frames unmodified, logs every attempt including failures);
-        removed two leftover "Discover LIN IDs" UI references to the scanner
-        retired in V1.03; "PNP" wording unified to "High-Side MOSFET"
+V1.08 — Scroll-wheel wizard: when Learn finds a scroll wheel it asks for Scroll UP,
+        Scroll DOWN and an optional Press, then saves one row per movement in one
+        go (adding the partner row straight after Learn often failed to take);
+        a long press on a phone no longer highlights text in the web UI
+V1.07 — Scroll-wheel (roller) detection and assignment: rollers recognised from their
+        signed detent count and remembered; Learn sets Scroll up/down; detected
+        rollers listed with Forget; Split button and missing Scroll up/down
+        partner row offered; LIN monitor logs every scroll detent
+V1.06 — S3 board support, one codebase for both PCBs (DevKit and ESP32-S3 builds,
+        Releases/V<ver>/ and V<ver>-S3/); Independent Chassis Protocol (PQ/MQB)
+        for the chassis-bound button frame, separate from Wheel Protocol, so any
+        wheel↔chassis combination bridges; a protocol-change prompt updates button
+        rows still on a known PQ/MQB code and leaves learned/customised rows alone;
+        Dashboard "BCM" tile + raw BCM data, independent of the active backlight
+        source; LIN 2 health split into "any transaction" vs "light frame
+        specifically"; LIN Monitor CSV export; Passthru Mode (relays frames
+        unmodified, logs every attempt including failures); removed two leftover
+        "Discover LIN IDs" UI references to the scanner retired in V1.03; "PNP"
+        wording unified to "High-Side MOSFET"
+V1.05 — OTA overhaul (shared ota_manager / wifi_manager v2): OTA through the web UI
+        works end to end; Update from GitHub; Home WiFi (bridge mode); a recovery
+        page with the two uploads when the web UI is missing
 V1.04 — Adopted the shared Forbes Automotive UI theme (common style.css) for a
         standardised look across all products; wifi_manager/ota_manager made
         project-independent (this project is the source of the shared modules);
