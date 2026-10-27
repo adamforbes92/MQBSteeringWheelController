@@ -1,5 +1,7 @@
 # MFSW Controller
 
+**Get one ready-built:** [MFSW Controller at Forbes Automotive](https://forbes-automotive.com/products/lin-mfsw-controller?utm_source=github&utm_medium=readme&utm_campaign=mfsw) · Switch [OpenHaldex](https://openhaldex.com/?utm_source=github&utm_medium=readme&utm_campaign=mfsw) modes from a wheel button.
+
 The **MFSW Controller** is designed to allow control between PQ and MQB chassis and steering wheels on VAG and used as a man-in-the-middle adapter to control different steering wheels fitted into different marques.  It **reads button presses and backlight data from the steering-wheel LIN bus**, **re-maps** each new button to
 whatever your old hardware expects, and **sends** the result on up to four output
 channels at once: a **translated LIN frame**, a **CAN broadcast**, a **resistive
