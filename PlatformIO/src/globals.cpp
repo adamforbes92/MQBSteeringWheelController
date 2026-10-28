@@ -174,6 +174,10 @@ volatile uint8_t learnTarget = LEARN_NONE;
 volatile uint8_t learnRowIndex = 0;
 volatile uint32_t learnStartTimestamp = 0;
 volatile uint32_t mappingsRevision = 0;
+volatile uint32_t learnProbeSeq = 0;
+volatile uint8_t learnProbeCode = 0;
+volatile uint8_t learnProbeByte = 0;
+volatile int8_t learnProbeRotary = 0;
 uint8_t learnBaseline[8] = {0};
 volatile bool learnBaselineReady = false;
 

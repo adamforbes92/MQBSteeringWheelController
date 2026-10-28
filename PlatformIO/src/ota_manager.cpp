@@ -287,6 +287,22 @@ static size_t expectedSize(AsyncWebServerRequest *request)
 }
 
 // ---- Firmware upload --------------------------------------------------------
+// esp_image_header_t.chip_id values (esp_app_format.h)
+static const char *chipIdName(uint16_t id)
+{
+  switch (id)
+  {
+  case 0x0000: return "ESP32 (DevKit)";
+  case 0x0002: return "ESP32-S2";
+  case 0x0005: return "ESP32-C3";
+  case 0x0009: return "ESP32-S3";
+  case 0x000C: return "ESP32-C2";
+  case 0x000D: return "ESP32-C6";
+  case 0x0010: return "ESP32-H2";
+  default: return "another chip";
+  }
+}
+
 static size_t fwBytes = 0;
 static bool fwStarted = false;
 
@@ -320,6 +336,22 @@ static void handleFirmwareUpload(AsyncWebServerRequest *request, const String &f
 
   if (index == 0)
   {
+    // One product ships DevKit (ESP32) and S3/C3 builds side by side, so a
+    // wrong pick is easy. Refuse another chip's image here, before the OTA slot
+    // is erased - Update.end() would only catch it after the whole write.
+    // esp_image_header_t: magic 0xE9 at byte 0, chip_id (uint16 LE) at 12-13.
+#ifdef CONFIG_IDF_FIRMWARE_CHIP_ID
+    if (len >= 16 && data[0] == 0xE9)
+    {
+      uint16_t chip = (uint16_t)(data[12] | (data[13] << 8));
+      if (chip != CONFIG_IDF_FIRMWARE_CHIP_ID)
+      {
+        otaSetResult(fwResult, 400, String("OTA ERROR: that firmware.bin is built for ") + chipIdName(chip) + ", but this controller is " +
+                                        chipIdName(CONFIG_IDF_FIRMWARE_CHIP_ID) + " - nothing was flashed. Use the release for this board.");
+        return;
+      }
+    }
+#endif
     if (Update.isRunning())
       Update.abort();
     otaLog("Starting firmware update: %s (%u bytes expected)", filename.c_str(), (unsigned)expectedSize(request));
@@ -492,6 +524,8 @@ ota_config_t otaDefaultConfig(void)
   c.githubRepo = nullptr;
   c.githubBranch = "main";
   c.releasesDir = "Releases";
+  c.boardId = "esp32";
+  c.boardName = nullptr;
   c.rebootDelayMs = 1500;
   c.verbose = false;
   return c;
@@ -532,6 +566,8 @@ void otaManagerAttach(AsyncWebServer &server)
     json += "\"fsVersion\":\"" + jsonEscape(otaFsVersion()) + "\",";
     json += "\"product\":\"" + jsonEscape(otaManagerProduct()) + "\",";
     json += "\"board\":\"" + jsonEscape(board) + "\",";
+    json += "\"boardId\":\"" + jsonEscape(strHasContent(g_cfg.boardId) ? g_cfg.boardId : "esp32") + "\",";
+    json += "\"boardName\":\"" + jsonEscape(strHasContent(g_cfg.boardName) ? g_cfg.boardName : "") + "\",";
     json += "\"chipModel\":\"" + jsonEscape(ESP.getChipModel()) + "\",";
     json += "\"chipRevision\":" + String(chip.revision) + ",";
     json += "\"partition\":\"" + String(running ? running->label : "?") + "\",";

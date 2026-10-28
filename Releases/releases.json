@@ -1,13 +1,117 @@
 {
   "product": "MQBSteeringWheelController",
-  "latest": "1.06",
+  "latest": "1.08",
+  "latestByBoard": {
+    "esp32": "1.08",
+    "esp32s3": "1.08"
+  },
   "releases": [
+    {
+      "version": "1.08",
+      "channel": "stable",
+      "date": "2026-10-13",
+      "ota": true,
+      "notes": "Scroll-wheel wizard: Learn on a scroll wheel now asks for Scroll Up, Scroll Down and an optional Press, then saves one row per movement in one go. A long press on a phone no longer highlights text.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.08/firmware.bin",
+            "size": 1186144,
+            "sha256": "65d36cf85cee8c50a17a4b17d34ec6b9de389d456293800f78a7b2ca32173640"
+          },
+          "filesystem": {
+            "path": "V1.08/littlefs.bin",
+            "size": 655360,
+            "sha256": "7b7dc4db72132bab924902ab202c70c52ade28b4d47ddf3ad1ed7ae34720d1ac"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.08-S3/firmware.bin",
+            "size": 1165968,
+            "sha256": "047102c5f40f241fffdecac4cc4beb5d253e332ec95ccb5175a6389f46f7e257"
+          },
+          "filesystem": {
+            "path": "V1.08-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "08f958bed2e56d34a1c3923baef2dc23c698376d18c53778f39c894d69d36764"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.08/firmware.bin",
+        "size": 1186144,
+        "sha256": "65d36cf85cee8c50a17a4b17d34ec6b9de389d456293800f78a7b2ca32173640"
+      },
+      "filesystem": {
+        "path": "V1.08/littlefs.bin",
+        "size": 655360,
+        "sha256": "7b7dc4db72132bab924902ab202c70c52ade28b4d47ddf3ad1ed7ae34720d1ac"
+      }
+    },
+    {
+      "version": "1.07",
+      "channel": "stable",
+      "date": "2026-10-09",
+      "ota": true,
+      "notes": "Scroll-wheel (roller) detection and assignment plus everything in 1.06, on both DevKit and ESP32-S3 boards (first S3 release). Per-board OTA with wrong-board protection.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.07/firmware.bin",
+            "size": 1237904,
+            "sha256": "64f908fda05c4fbfdfa47dc8be4aac83cfef186e14900aae19f2ffb971e92df9"
+          },
+          "filesystem": {
+            "path": "V1.07/littlefs.bin",
+            "size": 655360,
+            "sha256": "5a51d1156c3f2870801a0b5a859c567b453fa2d10ef013550f47fc2f9b71186b"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.07-S3/firmware.bin",
+            "size": 1220768,
+            "sha256": "34f5ead5efedbf649a45e12a0b146257dfdc6100bd2d030af7a20bff4e3b3ca3"
+          },
+          "filesystem": {
+            "path": "V1.07-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "b9bce756df537fe5b9e72b6b3745d9aec78ba581a241bdd182275757ddb336da"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.07/firmware.bin",
+        "size": 1237904,
+        "sha256": "64f908fda05c4fbfdfa47dc8be4aac83cfef186e14900aae19f2ffb971e92df9"
+      },
+      "filesystem": {
+        "path": "V1.07/littlefs.bin",
+        "size": 655360,
+        "sha256": "5a51d1156c3f2870801a0b5a859c567b453fa2d10ef013550f47fc2f9b71186b"
+      }
+    },
     {
       "version": "1.06",
       "channel": "stable",
       "date": "2026-10-04",
       "ota": true,
       "notes": "Scroll-wheel (roller) detection and assignment; independent Chassis Protocol (PQ/MQB); BCM dashboard tile; Passthru Mode; LIN Monitor CSV export.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.06/firmware.bin",
+            "size": 1237040,
+            "sha256": "e383cbf4a07ae5a14d2f71a2ad8fe927259fb52ff4a1b2811bf34891d3ea5394"
+          },
+          "filesystem": {
+            "path": "V1.06/littlefs.bin",
+            "size": 655360,
+            "sha256": "4781e4727b0271cc475e080d71cecf207ca5a087bc89a549f87f688294a73325"
+          }
+        }
+      },
       "firmware": {
         "path": "V1.06/firmware.bin",
         "size": 1237040,
@@ -25,6 +129,20 @@
       "date": "2026-09-21",
       "ota": true,
       "notes": "OTA overhaul: update from GitHub, Home WiFi bridge mode, recovery page; shared ota_manager/wifi_manager v2.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.05/firmware.bin",
+            "size": 1235792,
+            "sha256": "737098e2c00197c0fa5ce3fb7fc056b58b6e2f0e6b1a7411795534e5a2b5d1b2"
+          },
+          "filesystem": {
+            "path": "V1.05/littlefs.bin",
+            "size": 655360,
+            "sha256": "03dc726c25f81877fd2856400306b1d5857a782730a8b0d74b4d7eb9ccaa30c2"
+          }
+        }
+      },
       "firmware": {
         "path": "V1.05/firmware.bin",
         "size": 1235792,
@@ -42,6 +160,20 @@
       "date": "2026-09-20",
       "ota": true,
       "notes": "Shared UI theme; per-product cache-busting.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.04/firmware.bin",
+            "size": 1205904,
+            "sha256": "c3dad6b821fd3386ba7ae58d817137ba820e9ab5825e7cf5b03e6db16cc9ce7a"
+          },
+          "filesystem": {
+            "path": "V1.04/littlefs.bin",
+            "size": 1441792,
+            "sha256": "34c72dba02f1659553ed86d7f16d401caeba0b2d22fda36a0c3d0317f9dca2e0"
+          }
+        }
+      },
       "firmware": {
         "path": "V1.04/firmware.bin",
         "size": 1205904,
@@ -59,6 +191,20 @@
       "date": "2026-09-20",
       "ota": true,
       "notes": "",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.02/firmware.bin",
+            "size": 1070416,
+            "sha256": "dfd3333907b9663707b55361e3321b6487a75b3f3a9bdf00b2b8c51eb21e84b3"
+          },
+          "filesystem": {
+            "path": "V1.02/littlefs.bin",
+            "size": 1441792,
+            "sha256": "32c84902a3982a720b04a10cff9d2403d35b450f98eab90abf0589c2bb17fc5c"
+          }
+        }
+      },
       "firmware": {
         "path": "V1.02/firmware.bin",
         "size": 1070416,
@@ -76,6 +222,20 @@
       "date": "2026-09-20",
       "ota": true,
       "notes": "",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.01/firmware.bin",
+            "size": 1063616,
+            "sha256": "3b2de19e1623305b6f42389c8883cf7f3c3aa73993ad6d47e0325172c67aae21"
+          },
+          "filesystem": {
+            "path": "V1.01/littlefs.bin",
+            "size": 1441792,
+            "sha256": "a25e077d33b3b49ca61d1478084b674299d94ff8236f327a352ecee8d0fc9a16"
+          }
+        }
+      },
       "firmware": {
         "path": "V1.01/firmware.bin",
         "size": 1063616,
@@ -93,6 +253,20 @@
       "date": "2026-09-20",
       "ota": true,
       "notes": "",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.00/firmware.bin",
+            "size": 1062224,
+            "sha256": "54df6d9e5f47bcc302d9c957ee38e0640151a3d5adf0bfe2c0d47fd3d4b38f6c"
+          },
+          "filesystem": {
+            "path": "V1.00/littlefs.bin",
+            "size": 1441792,
+            "sha256": "dcacc7edfbde1facbe27519ded4ca36fc641f49115a1b851b83912b93d88766e"
+          }
+        }
+      },
       "firmware": {
         "path": "V1.00/firmware.bin",
         "size": 1062224,

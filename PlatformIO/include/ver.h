@@ -5,18 +5,47 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
-V1.06 - Scroll-wheel (roller) detection and assignment, from the 02/10/2026 MQB
-        capture (scroll.csv): a roller reports a signed per-frame detent count
-        in byte 3 (01..03 up, 0F..0C down) under one code per roller (0x06 left,
-        0x12 right); a plain button reports 1 on its first frame, then 4/5/6
-        held, never 2/3 or negative. So a negative or +2/+3 step marks a code as
-        a roller, persisted (NVS "rollerCodes"), whether seen during Learn or in
+V1.08 - Scroll-wheel wizard (09/10/2026). Adding the partner row from a confirm
+        dialog straight after Learn often failed to take — rows were inserted
+        while Learn, which is addressed by row index, could still be armed.
+        Now, when Learn finds a scroll wheel (or Split / + row is clicked), a
+        wizard asks for Scroll UP, Scroll DOWN and an optional Press, showing
+        "Up Learned" / "Down Learned" / "Pressed Learned" as each lands, and
+        only then replaces the row with one row per movement in a single save.
+        The movement used for the original Learn is pre-filled. A press that
+        sends the scroll code itself is refused (it would also fire as Scroll
+        up). The replaced row's outputs carry over to the direction it was
+        learned as. Firmware: new Learn target LEARN_PROBE (4) captures a code
+        without writing any row, 10 s window; /api/status reports
+        learnProbeSeq / learnProbeCode / learnProbeByte / learnProbeRotary.
+V1.07 - Scroll-wheel (roller) detection and assignment, ported from the DevKit-only
+        "V1.06 - Scroll" build (that tree's V1.06 is NOT this tree's V1.06 S3
+        release; this V1.07 carries both). From the 02/10/2026 MQB capture
+        (scroll.csv): a roller reports a signed per-frame detent count in byte 3
+        (01..03 up, 0F..0C down) under one code per roller (0x06 left, 0x12
+        right); a plain button reports 1 on its first frame, then 4/5/6 held,
+        never 2/3 or negative. So a negative or +2/+3 step marks a code as a
+        roller, persisted (NVS "rollerCodes"), whether seen during Learn or in
         normal use. Learn sets Scroll up/down on the learned row when the step
         is unambiguous or the code is a known roller (scroll DOWN to learn one),
         and clears a stale direction otherwise. The UI lists detected rollers
         (with Forget), flags roller rows that still fire either way with a
         Split button, and offers/adds the missing Scroll up/down partner row.
         /api/status and /api/setup report rollerCodes; /api/rollers/clear.
+        Also picks up the LIN monitor fix from V1.05 (02/10/2026): while a
+        control is active, frames differing only in byte 0 are still logged, so
+        consecutive scroll detents each appear; "[SW] btn" log lines carry the
+        matched row, scroll delta and press stage.
+V1.06 - S3 board support, ONE codebase for both PCBs: platformio.ini has two envs,
+        esp32dev (-DMFSW_BOARD_DEVKIT, the DevKit boards, unchanged behaviour) and
+        esp32-s3 (-DMFSW_BOARD_S3, the ESP32-S3-WROOM-1-N16R8 board). Board macros
+        in include/board.h, per-board pins in defs.h. S3 pin map (from
+        PCBs/rev3-final): LIN1 TX/RX 17/16, LIN2 TX/RX 6/5, LIN wake 18, LIN NSLP
+        15, CAN RX/TX 13/14, X9C103 U/D/INC/CS 9/10/11, high-side drive 21, aux
+        light 7, LED 2, native USB on 19/20. Console/esptool over USB-C; 16 MB
+        partition table. OTA: /api/ota/info reports boardId, releases.json carries
+        per-board images ("boards"), make_release.py --env packages
+        Releases/V<ver>/ (DevKit) and Releases/V<ver>-S3/ (S3).
         Also ships everything below that was pending as "Unreleased":
         Independent Chassis Protocol (PQ/MQB) for the button frame sent to the
         chassis/BCM, separate from Wheel Protocol, so any combination bridges (PQ/PQ,

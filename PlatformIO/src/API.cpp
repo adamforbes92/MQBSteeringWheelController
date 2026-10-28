@@ -18,8 +18,12 @@ void clearLearnState() {
   learnStartTimestamp = 0;
 }
 
+static uint32_t learnWindowMs() {
+  return (learnTarget == LEARN_PROBE) ? kLearnProbeWindowMs : kLearnWindowMs;
+}
+
 void expireLearnState() {
-  if (learnActive && (millis() - learnStartTimestamp) > 5000UL) {
+  if (learnActive && (millis() - learnStartTimestamp) > learnWindowMs()) {
     clearLearnState();
   }
 }
@@ -169,10 +173,22 @@ void setupApiServer() {
 
     uint32_t elapsed = learnActive ? (millis() - learnStartTimestamp) : 0;
     uint32_t remaining = 0;
-    if (elapsed < 5000UL) {
-      remaining = 5000UL - elapsed;
+    if (learnActive && elapsed < learnWindowMs()) {
+      remaining = learnWindowMs() - elapsed;
     }
     doc["learnMsRemaining"] = remaining;
+    {
+      portENTER_CRITICAL(&stateMux);
+      const uint32_t seq    = learnProbeSeq;
+      const uint8_t  code   = learnProbeCode;
+      const uint8_t  byteIx = learnProbeByte;
+      const int8_t   rotary = learnProbeRotary;
+      portEXIT_CRITICAL(&stateMux);
+      doc["learnProbeSeq"]    = seq;
+      doc["learnProbeCode"]   = code;
+      doc["learnProbeByte"]   = byteIx;
+      doc["learnProbeRotary"] = rotary;
+    }
     doc["diagPnpActive"]        = diagPnpActive;
     doc["diagResistiveEnabled"] = diagResistiveEnabled;
     doc["diagResistiveOhm"]     = diagResistiveOhm;
@@ -557,7 +573,9 @@ void setupApiServer() {
         uint8_t rowIndex = body["rowIndex"] | (uint8_t)0;
         uint8_t target   = body["target"]   | (uint8_t)0;
 
-        if (rowIndex >= buttonMappingCount || target < LEARN_OLD_LIN || target > LEARN_NEW_CAN) {
+        // A probe writes no row, so its rowIndex is ignored.
+        const bool rowOk = (target == LEARN_PROBE) || rowIndex < buttonMappingCount;
+        if (!rowOk || target < LEARN_OLD_LIN || target > LEARN_PROBE) {
           request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid learn request\"}");
           return;
         }

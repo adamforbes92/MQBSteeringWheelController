@@ -84,6 +84,17 @@ typedef struct
   const char *githubRepo;   // "Owner/repo" holding Releases/ (NULL/"" = no GitHub route offered)
   const char *githubBranch; // default "main"
   const char *releasesDir;  // default "Releases"
+  // Board variant of this build, for products that ship more than one PCB from
+  // one codebase. Each board has its own release folder (Releases/V<ver>/ for
+  // "esp32", Releases/V<ver>-S3/ for "esp32s3", -C3 for "esp32c3") and
+  // releases.json carries per-board images under "boards": {"esp32": {...},
+  // "esp32s3": {...}}; ota.js picks the entry matching boardId and treats a
+  // release without one as not installable on this board. The top-level
+  // "firmware"/"filesystem" are only ever the "esp32" images, so older UIs in
+  // the field never see another chip's image. The firmware upload route also
+  // refuses an image whose header names another chip. Default "esp32".
+  const char *boardId;      // e.g. "esp32", "esp32s3" (matches make_release.py's board ids)
+  const char *boardName;    // human name shown on the OTA tab (e.g. "ESP32-S3 rev3 board")
   uint32_t rebootDelayMs;   // wait after a successful firmware update before ESP.restart() (default 1500)
   bool verbose;             // Serial.printf status lines
 } ota_config_t;

@@ -204,6 +204,14 @@ extern volatile uint32_t learnStartTimestamp;
 // overwriting it with the stale copy it was showing.
 extern volatile uint32_t mappingsRevision;
 
+// Last LEARN_PROBE capture. learnProbeSeq is bumped on each one so the UI can
+// tell a fresh capture from the previous result. Written and read under
+// stateMux, so a reader never sees a new seq with an old code.
+extern volatile uint32_t learnProbeSeq;
+extern volatile uint8_t  learnProbeCode;
+extern volatile uint8_t  learnProbeByte;    // frame byte it was captured from
+extern volatile int8_t   learnProbeRotary;  // scroll movement on that frame (0 = none)
+
 extern uint8_t learnBaseline[8];  // idle button-frame snapshot, taken lazily — see learnBaselineReady
 // False until the baseline has been taken from a frame that actually arrived
 // error-free. Arming Learn cannot snapshot immediately: getButtonState() zeroes

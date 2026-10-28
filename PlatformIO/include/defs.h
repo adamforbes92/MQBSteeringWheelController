@@ -12,8 +12,9 @@
 #include <WiFi.h>
 
 #include "ver.h"
+#include "board.h"   // MFSW_BOARD_DEVKIT / MFSW_BOARD_S3 (set by platformio.ini)
 
-#define FW_VERSION "1.06"
+#define FW_VERSION "1.08"
 
 #define enableDebug 0
 #define debugIO 0
@@ -66,12 +67,30 @@
 #define DEBUG_CHASSIS_CAN_(x, ...)
 #endif
 
+// ---------------------------------------------------------------------------
+// Pins — one block per board (selected in board.h)
+// ---------------------------------------------------------------------------
+#if MFSW_BOARD_S3
+// S3 board: ESP32-S3-WROOM-1-N16R8 (U8). Net names from the schematic
+// (PCBs/rev3-final/ProPrj_mfswControllerV1-S3_claude_2026-09-24.epro2), module
+// pad -> IOn per the WROOM-1 pinout. Six pins moved off the DevKit numbering:
+// the S3 has no GPIO22-27, IO19/IO20 are the USB PHY and IO35-37 belong to the
+// module's PSRAM. Strapping pins IO0 (BOOT), IO3, IO45, IO46 are untouched.
+constexpr int pinTX_LINSteeringWheel = 17;  // LIN1_TX -> U1 TJA1021 TXD (pad 10)
+constexpr int pinRX_LINSteeringWheel = 16;  // LIN1_RX <- U1 RXD (pad 9)
+constexpr int pinTX_LINchassis = 6;         // LIN2_TX -> U2 TXD (pad 6)   (was 23)
+constexpr int pinRX_LINchassis = 5;         // LIN2_RX <- U2 RXD (pad 5)   (was 22)
+constexpr int pinWake_LIN = 18;             // LIN_WAKE -> Q3 -> LIN_NWAKE (pad 11)
+constexpr int pinCS_LIN = 15;               // LIN_CS -> U1/U2 NSLP (pad 8)  (was 19)
+#else
+// V1/V2 boards: ESP32 DevKit V1. Unchanged from V1.05.
 constexpr int pinTX_LINSteeringWheel = 17;
 constexpr int pinRX_LINSteeringWheel = 16;
 constexpr int pinTX_LINchassis = 23;
 constexpr int pinRX_LINchassis = 22;
 constexpr int pinWake_LIN = 18;
 constexpr int pinCS_LIN = 19;
+#endif
 
 constexpr uint8_t linLightID = 0x0D;
 constexpr uint8_t linButtonID = 0x0E;
@@ -82,6 +101,19 @@ constexpr uint32_t linBaud = 19200;
 constexpr uint32_t linPause = 100;
 constexpr uint32_t btnDebounce = 1000;
 
+#if MFSW_BOARD_S3
+constexpr int pinCAN_RX = 13;       // CHASSIS_RX <- U5 TCAN1044 RXD (pad 21)
+constexpr int pinCAN_TX = 14;       // CHASSIS_TX -> U5 TXD (pad 22)
+constexpr int pinOnboardLed = 2;    // ESP_LED -> R21 -> LED_ESP -> GND (pad 38, active HIGH)
+
+constexpr int pinAuxLight = 7;      // ESP_ANALOG_LIGHT <- U6 Schmitt buffer (pad 7)   (was 39)
+
+constexpr int resistorUD = 9;       // U/D -> U3 X9C103 (pad 17)   (was 25)
+constexpr int resistorInc = 10;     // INC -> U3 (pad 18)          (was 26)
+constexpr int resistorCS = 11;      // CS  -> U3 (pad 19)          (was 27)
+
+constexpr int pinPNP = 21;          // ESP_TRANS -> R7 -> Q2 -> Q1 high-side (pad 23)
+#else
 constexpr int pinCAN_RX = 13;
 constexpr int pinCAN_TX = 14;
 constexpr int pinOnboardLed = 2;
@@ -93,6 +125,7 @@ constexpr int resistorInc = 26;
 constexpr int resistorCS = 27;
 
 constexpr int pinPNP = 21;
+#endif
 constexpr uint8_t FLAG_ACTIVATES_PNP      = 0x01;  // bit 0: trigger PNP output when pressed
 constexpr uint8_t FLAG_LATCH              = 0x02;  // bit 1: latch on press, clear on next press — applies to PNP, CAN and LIN outputs
 constexpr uint8_t FLAG_OPENHALDEX_CONTROL = 0x04;  // bit 2: button commands an OpenHaldex mode change (exclusive: no PNP/CAN/LIN/resistive output)
@@ -245,4 +278,11 @@ enum LearnTarget : uint8_t {
   LEARN_OLD_LIN = 1,
   LEARN_NEW_LIN = 2,
   LEARN_NEW_CAN = 3,
+  // Capture only: the code is reported to the UI (learnProbe* in globals.h)
+  // and no row is written. The scroll-wheel wizard learns up/down/press this
+  // way, so the table never shifts under a Learn that is still armed.
+  LEARN_PROBE = 4,
 };
+
+constexpr uint32_t kLearnWindowMs      = 5000;
+constexpr uint32_t kLearnProbeWindowMs = 10000;  // wizard steps: time to reach the wheel
