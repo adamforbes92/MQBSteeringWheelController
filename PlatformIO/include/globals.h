@@ -146,6 +146,7 @@ inline bool isRollerDelta(int8_t d) { return d < 0 || d == 2 || d == 3; }
 // PQ wheels don't require this. See mqbActByte1..3.
 constexpr uint8_t WHEEL_PROTOCOL_PQ  = 0;
 constexpr uint8_t WHEEL_PROTOCOL_MQB = 1;
+constexpr uint8_t WHEEL_PROTOCOL_MEB = 2;
 extern volatile uint8_t wheelProtocol;
 
 // MQB 0x0D backlight activation bytes 1..3 (byte 0 is live brightness). Known
@@ -165,6 +166,7 @@ extern volatile uint8_t mqbActByte3;
 // LIN.cpp, modelled on github.com/Dimka8901/MQB-MFSW-PQ25's mqbToPq().
 constexpr uint8_t CHASSIS_PROTOCOL_PQ  = 0;
 constexpr uint8_t CHASSIS_PROTOCOL_MQB = 1;
+constexpr uint8_t CHASSIS_PROTOCOL_MEB = 2;
 extern volatile uint8_t chassisProtocol;
 
 extern volatile uint8_t latestLinButtonId;
