@@ -446,8 +446,8 @@ const KNOWN_BUTTON_CODE_PAIRS = [
 // needed. Pass {dryRun: true} to just count how many rows WOULD change,
 // without touching the mappings array. Returns the number of rows affected.
 function applyProtocolDefaultsToMappings({ dryRun = false } = {}) {
-  const wheelProtocol = document.getElementById("wheelProtocol")?.value || "0"; // default '0' for wheelProtocol is PQ
-  const chassisProtocol = document.getElementById("chassisProtocol")?.value || "1"; // default '1' for chassisProtocol is MQB
+  const wheelProtocol = document.getElementById("wheelProtocol")?.value || "1"; // default '1' for wheelProtocol is MQB
+  const chassisProtocol = document.getElementById("chassisProtocol")?.value || "2"; // default '2' for chassisProtocol is MEB
   // Wheel and chassis on the SAME protocol (PQ<->PQ or MQB<->MQB) means no
   // translation is possible by definition -- every configured row's new code
   // must equal its old code. This has to apply to every row, not just the
@@ -488,7 +488,7 @@ function applyProtocolDefaultsToMappings({ dryRun = false } = {}) {
         case '2':
           return meb;
         default:
-          return pq;
+          return mqb;
       }
     })();
     const newNew = (() => {
@@ -500,7 +500,7 @@ function applyProtocolDefaultsToMappings({ dryRun = false } = {}) {
         case '2':
           return meb;
         default:
-          return mqb;
+          return meb;
       }
     })();
 
@@ -1512,11 +1512,11 @@ async function saveSetup() {
     // direction from it gives a random sign.
     linRotaryByteIndex: (document.getElementById("linRotaryByteIndex").value.trim() === "")
       ? 3 : clamp(num(document.getElementById("linRotaryByteIndex").value), 0, 8),
-    wheelProtocol: Number(document.getElementById("wheelProtocol").value) || 0,
+    wheelProtocol: Number(document.getElementById("wheelProtocol").value) || 1,
     mqbActByte1: parseHexByte("mqbActByte1", 0xFF),
     mqbActByte2: parseHexByte("mqbActByte2", 0x00),
     mqbActByte3: parseHexByte("mqbActByte3", 0x00),
-    chassisProtocol: Number(document.getElementById("chassisProtocol").value) || 1,
+    chassisProtocol: Number(document.getElementById("chassisProtocol").value) || 2,
     charismaMode: Number(document.getElementById("charismaMode").value) || 0,
     charismaButtonBit: Number(document.getElementById("charismaButtonBit").value) || 22,
     charismaProgramCount: clamp(num(document.getElementById("charismaProgramCount").value), 2, 15) || 4,

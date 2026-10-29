@@ -65,24 +65,24 @@ volatile uint32_t lastCanRxMs = 0;
 ButtonMapping buttonMappings[kMaxButtonMappings] = {
     // {name, oldButtonId, newLinButtonId, canByteIndex, canBitIndex, resistiveOhm}
     // canByteIndex 0xFF = no CAN output for that button
-    {"Previous",           0x03, 0x03, 0,    0, 0},   // byte 0 bit 0   (MQB was 0x16, verified)
-    {"Next",               0x02, 0x02, 0,    1, 0},   // byte 0 bit 1   (MQB was 0x15, verified)
-    {"Voice/Mic",          0x1A, 0x1A, 0,    2, 0},   // byte 0 bit 2   (MQB was 0x19, verified)
-    {"Phone",              0x1A, 0x1A, 0,    3, 0},   // byte 0 bit 3   (MQB was 0x1C, unverified)
-    {"Return",             0x29, 0x29, 0,    4, 0},   // byte 0 bit 4   (MQB was 0x23, verified)
-    {"Up",                 0x22, 0x22, 0,    5, 30},  // byte 0 bit 5   (MQB was 0x04, verified)
-    {"Down",               0x23, 0x23, 0,    6, 60},  // byte 0 bit 6   (MQB was 0x05, verified)
-    {"Source -",            0x09, 0x09, 0,    7, 0},   // byte 0 bit 7   (MQB was 0x03, verified)
-    {"Source +",            0x0A, 0x0A, 1,    0, 0},   // byte 1 bit 0   (MQB was 0x02, verified)
-    {"OK",                 0x28, 0x28, 1,    1, 0},   // byte 1 bit 1   (MQB was 0x07, verified)
-    {"Volume +",            0x06, 0x06, 1,    2, 20},  // byte 1 bit 2   (MQB was 0x10, verified)
-    {"Volume -",            0x07, 0x07, 1,    3, 10},  // no CAN output  (MQB was 0x11, verified)
-    {"Voice/Mic ACC",      0x2B, 0x2B, 1,    4, 0},   // no CAN output  (MQB was 0x0C, verified)
-    {"Voice/Mic ACC2",     0x42, 0x42, 1,    5, 0},   // no CAN output  (MQB was 0x0C, unverified)
-    {"Paddle +",  0x1E, 0x1E, 1,    6, 0},   // no CAN output  (MQB was 0x00 -- never had a code at all)
-    {"Paddle -", 0x1F, 0x1F, 1,    7, 0},   // no CAN output  (MQB was 0x00 -- never had a code at all)
-    {"Paddles (both)", 0x03, 0x03, 0xFF, 0, 0, 0, 0, 6},   // byte 6 = up+down pressed together (MQB was 0x00)
-    {"Horn",           0x01, 0x01, 0xFF, 0, 0, 0, 0, 7},   // byte 7 = horn line grounded (MQB was 0x00)
+    {"Previous",           0x16, 0x04, 0,    0, 0},   // byte 0 bit 0
+    {"Next",               0x15, 0x05, 0,    1, 0},   // byte 0 bit 1
+    {"Voice/Mic",          0x19, 0x19, 0,    2, 0},   // byte 0 bit 2
+    {"Phone",              0x1C, 0x19, 0,    3, 0},   // byte 0 bit 3
+    {"Return",             0x23, 0x23, 0,    4, 0},   // byte 0 bit 4
+    {"Up",                 0x04, 0x04, 0,    5, 30},  // byte 0 bit 5
+    {"Down",               0x05, 0x05, 0,    6, 60},  // byte 0 bit 6
+    {"Source -",           0x03, 0x03, 0,    7, 0},   // byte 0 bit 7
+    {"Source +",           0x02, 0x02, 1,    0, 0},   // byte 1 bit 0
+    {"OK",                 0x07, 0x07, 1,    1, 0},   // byte 1 bit 1
+    {"Volume +",           0x10, 0x10, 1,    2, 20},  // byte 1 bit 2
+    {"Volume -",           0x11, 0x11, 1,    3, 10},  // no CAN output
+    {"Cruise Mode",        0x0C, 0x74, 1,    4, 0},   // no CAN output  (Cruise Mode sends 0x0C, toggles between ACC and standard cruise)
+    {"ACC/Travel Assist",  0x74, 0x74, 1,    5, 0},   // no CAN output  (toggles between ACC and Travel Assist)
+    {"Paddle +",           0x1E, 0x1E, 1,    6, 0},   // no CAN output  (MQB was 0x00 -- never had a code at all)
+    {"Paddle -",           0x1F, 0x1F, 1,    7, 0},   // no CAN output  (MQB was 0x00 -- never had a code at all)
+    {"Paddles (both)",     0x03, 0x03, 0xFF, 0, 0, 0, 0, 6},   // byte 6 = up+down pressed together (MQB was 0x00)
+    {"Horn",               0x01, 0x01, 0xFF, 0, 0, 0, 0, 7},   // byte 7 = horn line grounded (MQB was 0x00)
 };
 size_t buttonMappingCount = 18;
 
@@ -271,12 +271,12 @@ void logCanFrame(uint16_t id, const uint8_t* data, uint8_t len) {
   portEXIT_CRITICAL(&canLogMux);
 }
 
-volatile uint8_t  wheelProtocol = WHEEL_PROTOCOL_PQ;
+volatile uint8_t  wheelProtocol = WHEEL_PROTOCOL_MQB;
 volatile uint8_t  mqbActByte1   = 0xFF;
 volatile uint8_t  mqbActByte2   = 0x00;
 volatile uint8_t  mqbActByte3   = 0x00;
 
-volatile uint8_t  chassisProtocol = CHASSIS_PROTOCOL_PQ;
+volatile uint8_t  chassisProtocol = CHASSIS_PROTOCOL_MEB;
 
 void loadPreferences() {
   size_t mapCount = preferences.getUInt("mapCount", buttonMappingCount);
@@ -330,12 +330,12 @@ void loadPreferences() {
   linRotaryByteIndex    = preferences.getUChar("linRotByte",  linRotaryByteIndex);
   if (linRotaryByteIndex > 8) linRotaryByteIndex = 8;  // 8 = rotary disabled
   wheelProtocol         = preferences.getUChar("wheelProto",  wheelProtocol);
-  if (wheelProtocol > WHEEL_PROTOCOL_MEB) wheelProtocol = WHEEL_PROTOCOL_PQ;
+  if (wheelProtocol > WHEEL_PROTOCOL_MEB) wheelProtocol = WHEEL_PROTOCOL_MQB;
   mqbActByte1           = preferences.getUChar("mqbAct1",     mqbActByte1);
   mqbActByte2           = preferences.getUChar("mqbAct2",     mqbActByte2);
   mqbActByte3           = preferences.getUChar("mqbAct3",     mqbActByte3);
   chassisProtocol       = preferences.getUChar("chassisProto", chassisProtocol);
-  if (chassisProtocol > CHASSIS_PROTOCOL_MEB) chassisProtocol = CHASSIS_PROTOCOL_MQB;
+  if (chassisProtocol > CHASSIS_PROTOCOL_MEB) chassisProtocol = CHASSIS_PROTOCOL_MEB;
   charismaMode          = preferences.getUChar("chaMode",     charismaMode);
   if (charismaMode > CHARISMA_MODE_MAX) charismaMode = CHARISMA_MODE_OFF;
   charismaButtonBit     = preferences.getUChar("chaBtnBit",   charismaButtonBit);
