@@ -89,6 +89,35 @@ the **LIN Monitor** while pressing them to find the frame and byte that change.
 
 ---
 
+## Building from Source
+
+The firmware is a [PlatformIO](https://platformio.org/) project. On GitHub it lives in the
+**`PlatformIO/`** folder (the one holding `platformio.ini`), so open or `cd` into that folder.
+
+1. Install PlatformIO: the VS Code extension, or `pip install platformio` for the CLI.
+2. Build for your board:
+   - `pio run -e esp32dev` for the V1/V2 boards (ESP32 DevKit V1, 4 MB flash,
+     `partitions_mqbsteeringwheelcontroller.csv`)
+   - `pio run -e esp32-s3` for the S3 board (ESP32-S3-WROOM-1, 16 MB flash,
+     `partitions_mqbsteeringwheelcontroller_16MB.csv`)
+3. Flash the firmware with `pio run -e <env> -t upload`, and the web UI (`data/`) with
+   `pio run -e <env> -t uploadfs`. Both are needed on a fresh board. After that, the OTA tab
+   can update both.
+
+The LIN library is **vendored** in `lib/LIN master portable`. It is
+[gicking/LIN_master_portable_Arduino](https://github.com/gicking/LIN_master_portable_Arduino)
+1.9 plus a small patch, `getRawRxBuffer()` in `LIN_master_Base.h`, which the upstream library
+doesn't have. PlatformIO picks up `lib/` automatically, so don't install the upstream library
+as well. The other libraries (AsyncTCP, ESPAsyncWebServer, ArduinoJson, X9C10X) are fetched
+from `lib_deps`, and the ESP32 platform (pioarduino) is downloaded on the first build.
+
+> **macOS / Linux:** `platformio.ini` sets `build_dir` and `libdeps_dir` to
+> `${sysenv.SYSTEMDRIVE}/.platformio/mqbsteeringwheel-pio/…`, which keeps build output off a
+> synced folder on Windows. `SYSTEMDRIVE` only exists on Windows. Elsewhere, delete those
+> two lines (PlatformIO then uses `.pio/` inside the project) or point them at a writable folder.
+
+---
+
 ## Hardware Overview
 
 ### External Interfaces

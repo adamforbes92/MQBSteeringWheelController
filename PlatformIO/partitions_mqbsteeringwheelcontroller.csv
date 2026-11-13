@@ -1,0 +1,24 @@
+# MQBSteeringWheelController 4 MB OTA partition table
+#
+# Replaces the stock default.csv, which gave 1.25 MB to each app slot and
+# 1.375 MB to a filesystem holding ~141 KB - leaving the firmware at 94.2%
+# of its slot. Same geometry as the OpenHaldex C6 board.
+#
+#   app slot   0x140000 -> 0x1A0000   (1.25 MB -> 1.625 MB, +30%)
+#   filesystem 0x160000 ->  0xA0000   (1.375 MB -> 640 KB)
+#
+# nvs keeps the stock offset and size, so saved settings survive the change.
+# coredump is KEPT at the stock offset: without it the panic handler cannot
+# save a dump and prints "Core dump flash config is corrupted" on every crash,
+# which is noise on top of whatever actually went wrong.
+#
+# NOTE: a partition change cannot be delivered over OTA - OTA never rewrites
+# the table at 0x8000. Existing units must be flashed over USB.
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x1A0000,
+app1,       app,  ota_1,    0x1B0000, 0x1A0000,
+spiffs,     data, spiffs,   0x350000, 0xA0000,
+coredump,   data, coredump, 0x3F0000, 0x10000,

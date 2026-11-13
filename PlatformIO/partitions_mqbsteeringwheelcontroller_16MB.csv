@@ -1,0 +1,25 @@
+# MQBSteeringWheelController 16 MB OTA partition table — S3 board (ESP32-S3-WROOM-1-N16R8)
+#
+# Same shape as partitions_mqbsteeringwheelcontroller.csv (the 4 MB DevKit table), scaled
+# up now that the flash is four times the size:
+#
+#   app slots   2 x 3 MB   (DevKit: 1.625 MB) - plenty of room for the S3 core,
+#                          which is a little larger, plus future features
+#   filesystem  1 MB       (DevKit: 640 KB)   - the web UI is ~180 KB; the image
+#                          is the whole partition, so it is kept modest to keep
+#                          OTA downloads and uploads quick
+#   coredump    64 KB      kept so the panic handler can save a dump
+#
+# ~7.1 MB of the 16 MB is used; the rest is left free rather than bloating
+# the LittleFS image. nvs keeps the stock offset/size (saved settings survive).
+#
+# NOTE: a partition change cannot be delivered over OTA - OTA never rewrites
+# the table at 0x8000. Existing units must be flashed over USB.
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x300000,
+app1,       app,  ota_1,    0x310000, 0x300000,
+spiffs,     data, spiffs,   0x610000, 0x100000,
+coredump,   data, coredump, 0x710000, 0x10000,
