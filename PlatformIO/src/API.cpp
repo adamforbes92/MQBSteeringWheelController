@@ -414,7 +414,8 @@ void setupApiServer() {
         mqbActByte3 = doc["mqbActByte3"] | (uint8_t)mqbActByte3;
         {
           int cp = doc["chassisProtocol"] | (int)chassisProtocol;
-          chassisProtocol = (uint8_t)(cp == CHASSIS_PROTOCOL_PQ ? CHASSIS_PROTOCOL_PQ : CHASSIS_PROTOCOL_MQB);
+          chassisProtocol = (uint8_t)((cp >= CHASSIS_PROTOCOL_PQ && cp <= CHASSIS_PROTOCOL_MAX)
+                                          ? cp : CHASSIS_PROTOCOL_MQB);
         }
         {
           int cm = doc["charismaMode"] | (int)charismaMode;

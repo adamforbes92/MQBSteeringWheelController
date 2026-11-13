@@ -5,6 +5,22 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.09 - MEB (ID.x) chassis protocol (13/11/2026), from PR #2 (waldo22, MQB
+        Atlas/Taos buttons in an ID.4 / ID. Buzz). Chassis Protocol 2 = MEB:
+        CHASSIS_PROTOCOL_MEB, accepted by /api/setup and NVS (was clamped back
+        to MQB). The firmware builds an MEB chassis frame exactly like MQB (the
+        ID.4 captures show the same 0x0E/0x0F layout); defaults are unchanged
+        (PQ wheel -> PQ chassis). Web UI: "MEB (ID.x, pre-2024)" option; the
+        protocol-change prompt knows MEB's codes (MQB's, except pre-2024 MEB
+        Previous/Next = 0x04/0x05, per waldo22's report, not bench-checked).
+        Also in the prompt: a CHASSIS change now looks each row's wheel code up
+        directly, so a same-family table (the PQ->PQ default, MQB->MEB) can be
+        translated to a cross-family chassis at all; paddle/horn rows (source
+        byte 6/7) are no longer mistaken for button codes (Paddles (both) 0x03
+        looked like PQ Previous). No MEB wheel protocol: not captured.
+        Also: GRA paddle frames (0x38A) pause while another module (a real
+        gateway) is already sending 0x38A, logged on change; GRA task stack
+        2048 -> 3072 bytes for those log lines.
 V1.08 - Scroll-wheel wizard (09/10/2026). Adding the partner row from a confirm
         dialog straight after Learn often failed to take — rows were inserted
         while Learn, which is addressed by row index, could still be armed.

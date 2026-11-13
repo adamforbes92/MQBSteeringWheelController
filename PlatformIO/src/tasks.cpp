@@ -393,8 +393,9 @@ void startTasks() {
   // SavvyCAN analyzer task — idles until a mode is enabled from the UI.
   setupAnalyzer();
 
-  // GRA (paddle shift) task — broadcasts continuously at 20 ms, matching DSG keepalive expectation
-  xTaskCreate(broadcastGRATask, "broadcastGRATask", 2048, nullptr, 2, nullptr);
+  // GRA (paddle shift) task — broadcasts continuously at 20 ms, matching DSG keepalive expectation.
+  // 3072 bytes of stack (was 2048): it now writes logLine() messages, which format text on the stack.
+  xTaskCreate(broadcastGRATask, "broadcastGRATask", 3072, nullptr, 2, nullptr);
 
   // CAN RX polling task — drains the TWAI receive queue continuously
   xTaskCreate([](void*) {

@@ -1,7 +1,5 @@
 # MFSW Controller
 
-**Get one ready-built:** [MFSW Controller at Forbes Automotive](https://forbes-automotive.com/products/lin-mfsw-controller?utm_source=github&utm_medium=readme&utm_campaign=mfsw) · Switch [OpenHaldex](https://openhaldex.com/?utm_source=github&utm_medium=readme&utm_campaign=mfsw) modes from a wheel button.
-
 The **MFSW Controller** is designed to allow control between PQ and MQB chassis and steering wheels on VAG and used as a man-in-the-middle adapter to control different steering wheels fitted into different marques.  It **reads button presses and backlight data from the steering-wheel LIN bus**, **re-maps** each new button to
 whatever your old hardware expects, and **sends** the result on up to four output
 channels at once: a **translated LIN frame**, a **CAN broadcast**, a **resistive
@@ -41,8 +39,8 @@ the S3) and the OTA tab only offers releases carrying images for the board it ru
 | Temperature frame | Polls a wheel temperature frame (default ID `0x3A`) for display in the LIN monitor |
 | Configurable LIN IDs | All four incoming frame IDs are user-editable, so wheels using non-standard IDs are supported |
 | Wheel protocol | Selectable PQ / MQB wheel protocol; MQB wheels are enabled with a different backlight activation frame |
-| Chassis protocol | Independent PQ / MQB selector for the button frame sent to the chassis/BCM — any wheel↔chassis combination bridges (PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB) |
-| Protocol-aware button codes | Changing either protocol offers to update known PQ/MQB button codes to match — rows already learned or customised are left alone |
+| Chassis protocol | Independent PQ / MQB / MEB selector for the button frame sent to the chassis/BCM — any wheel↔chassis combination bridges (PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB, PQ/MQB wheel → MEB ID.x) |
+| Protocol-aware button codes | Changing either protocol offers to update known PQ/MQB/MEB button codes to match — rows already learned or customised are left alone |
 | BCM live status | Dashboard shows the chassis LIN light frame's brightness and raw bytes independently of the active backlight source, so BCM presence is visible even under Aux/Forced |
 | Settings import/export | Back up and restore the full configuration (including the button map) as a JSON file |
 | LIN monitor | A live event log of button and accessory activity, exportable as CSV, viewable and clearable from the UI |
@@ -80,7 +78,9 @@ baseline and re-learn each button to suit your hardware. Both **PQ** and **MQB**
 supported on **each side independently** — pick the wheel family in **Setup → Wheel
 Protocol** and the chassis/BCM family in **Setup → Chassis Protocol** (see
 [LIN Frame Structure](#lin-frame-structure--protocols)), so any combination bridges:
-PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB. If your wheel's buttons aren't recognised at all, watch
+PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB. **MEB** (ID.3 / ID.4 / ID.7 / ID. Buzz) is a third
+chassis choice, for fitting an MQB (or PQ) wheel to an ID.x car — see
+[MEB chassis](#meb-chassis-idx). If your wheel's buttons aren't recognised at all, watch
 the **LIN Monitor** while pressing them to find the frame and byte that change.
 
 > Frame IDs and calibration live in [include/defs.h](include/defs.h) and
@@ -216,7 +216,7 @@ When a mapped button is seen, its CAN bit is held for the configurable **Send on
 window (`canHoldMs`, 50–5000 ms) so brief presses still produce a clean pulse.
 
 Changing **Wheel Protocol** or **Chassis Protocol** prompts to update the rows the firmware
-independently knows both a PQ and MQB code for (see the button code table under
+independently knows a PQ, MQB and MEB code for (see the button code table under
 [LIN Frame Structure](#lin-frame-structure--protocols)) — a row already learned or typed to a
 real-world value no longer matches either known code, so it's left alone automatically. If
 none of your rows are on a recognised code, the prompt says so instead of offering to change
@@ -305,12 +305,32 @@ The translated button code always sits in **byte 1**; the surrounding bytes are 
 | Protocol | Byte 0 | Byte 1 | Byte 4 |
 | --- | --- | --- | --- |
 | MQB (default) | `0x00` | button code | `0x00` |
+| MEB | `0x00` | button code | `0x00` |
 | PQ | rolling counter \| `0x80` | button code | `0x60` |
 
 MQB is today's original, already-validated shape. The PQ shape is modelled on
 [Dimka8901/MQB-MFSW-PQ25](https://github.com/Dimka8901/MQB-MFSW-PQ25)'s `mqbToPq()` — worth
 confirming against a real PQ chassis capture, it hasn't been independently verified against
 real hardware here.
+
+### MEB chassis (ID.x)
+
+Added from [PR #2](https://github.com/adamforbes92/MQBSteeringWheelController/pull/2)
+(waldo22), who fits Atlas / Taos MQB buttons to an ID.4 / ID. Buzz. Their captures of MQB
+wheels in an ID.4 show the same `0x0E` / `0x0F` layout as MQB, so the firmware builds an MEB
+chassis frame exactly like an MQB one. What differs is two button codes: pre-2024 MEB cars
+ignore Previous / Next (`16` / `15`) and skip tracks with Menu▲ / Menu▼ (`04` / `05`) instead.
+Choosing **MEB** as the Chassis Protocol makes the change prompt map Previous → `04` and
+Next → `05`; every other known code is the same as MQB. 2024+ MEB cars reportedly accept
+`16` / `15`, so **MQB** may be the better choice there. None of this has been checked on our
+own bench. There is no MEB *wheel* protocol: the ID.x capacitive wheel hasn't been captured.
+
+The ID.4 gateway's own `0x0D` light frame (`0B 7F 0B 3F`, `00 7E 00 3F`, `64 7F E4 3F`) isn't
+laid out like MQB's `xx F9 FF FF`. The wheel never sees it: the controller sends the wheel its
+own `0x0D`, made of byte 0 of the chassis frame (forwarded as brightness, as on MQB; in those
+captures it reads `00`–`64`, which looks like a brightness but isn't confirmed) plus the
+activation bytes from **Setup → Activation preset**. waldo22 found `7F F9 FF FF` wakes the
+Atlas buttons, i.e. the **Custom** preset with `F9 FF FF`.
 
 ### Checksum
 
@@ -343,7 +363,7 @@ Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse
 | Tab | Purpose |
 | --- | --- |
 | **Dashboard** | Live active button (LIN ID + resolved name), CAN output frame with per-bit view, backlight source/state/brightness plus an independent **BCM** brightness tile, and raw incoming (wheel **and** BCM) / outgoing LIN + CAN frames |
-| **Setup** | **Wheel Protocol (PQ / MQB)** with an MQB activation preset, independent **Chassis Protocol (PQ / MQB)**, Broadcast-over-CAN toggle + CAN ID, Paddle via CAN, Send-on-CAN window, aux-light source, force backlight + brightness slider, LIN output enable + ID, **Legacy PCB (swap LIN RX/TX)**, the four **incoming LIN IDs** (button / accessory / temperature / light), and aux dim/bright duty calibration with **Learn** buttons |
+| **Setup** | **Wheel Protocol (PQ / MQB)** with an MQB activation preset, independent **Chassis Protocol (PQ / MQB / MEB)**, Broadcast-over-CAN toggle + CAN ID, Paddle via CAN, Send-on-CAN window, aux-light source, force backlight + brightness slider, LIN output enable + ID, **Legacy PCB (swap LIN RX/TX)**, the four **incoming LIN IDs** (button / accessory / temperature / light), and aux dim/bright duty calibration with **Learn** buttons |
 | **Buttons** | The button builder table — add/delete up to 24 rows, edit every field, **Learn** original/new LIN IDs directly from the wheel, assign latch or OpenHaldex control per button (with a live OpenHaldex mode readout), and **Export / Import** the whole configuration as JSON |
 | **Diagnostics** | Bus health (CAN / LIN 1 / LIN 2 — split into "any transaction" and "light frame specifically" / resistive), High-Side MOSFET test toggle, resistive-output hold, a stepped Test Resistance probe, and a live **LIN Monitor** log with **Passthru Mode** and CSV **Export** |
 | **CAN Logger** | A **CAN Monitor** that records frames seen on the bus (optionally one CAN ID only, and only when the bytes change) with SavvyCAN-ordered CSV export, plus the **SavvyCAN Analyzer** toggles to forward all traffic over WiFi (GVRET) or USB serial — see [CAN Logger](#can-logger) below |
@@ -605,6 +625,10 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.09 — MEB (ID.x) chassis protocol, from PR #2: same frame as MQB, with pre-2024 MEB's
+        Previous/Next codes (04/05) in the protocol-change prompt; changing the
+        chassis now also translates a same-family table (e.g. the PQ→PQ default);
+        the prompt no longer treats paddle/horn rows as button codes
 V1.08 — Scroll-wheel wizard: when Learn finds a scroll wheel it asks for Scroll UP,
         Scroll DOWN and an optional Press, then saves one row per movement in one
         go (adding the partner row straight after Learn often failed to take);

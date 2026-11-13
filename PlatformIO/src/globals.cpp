@@ -45,6 +45,7 @@ volatile bool passthruEnabled = false;
 
 volatile bool dsgPaddleUp = false;
 volatile bool dsgPaddleDown = false;
+volatile uint32_t graOtherSenderMs = 0;  // 0 = never seen another 0x38A sender
 bool buttonFound = false;
 
 volatile uint32_t swLinLastOkMs = 0;
@@ -335,7 +336,7 @@ void loadPreferences() {
   mqbActByte2           = preferences.getUChar("mqbAct2",     mqbActByte2);
   mqbActByte3           = preferences.getUChar("mqbAct3",     mqbActByte3);
   chassisProtocol       = preferences.getUChar("chassisProto", chassisProtocol);
-  if (chassisProtocol > CHASSIS_PROTOCOL_MQB) chassisProtocol = CHASSIS_PROTOCOL_MQB;
+  if (chassisProtocol > CHASSIS_PROTOCOL_MAX) chassisProtocol = CHASSIS_PROTOCOL_MQB;
   charismaMode          = preferences.getUChar("chaMode",     charismaMode);
   if (charismaMode > CHARISMA_MODE_MAX) charismaMode = CHARISMA_MODE_OFF;
   charismaButtonBit     = preferences.getUChar("chaBtnBit",   charismaButtonBit);

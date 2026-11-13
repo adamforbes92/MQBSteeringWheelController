@@ -136,6 +136,14 @@ void pollCanRx() {
       openHaldexLastRxMs = millis();
     }
 
+    // PQ cruise/paddle frame GRA_Neu (0x38A) from another module: a real
+    // gateway is already passing the steering column's frame onto this bus,
+    // so broadcastGRATask() stays quiet rather than fight it. The CAN chip
+    // never hands us our own frames, so this is always someone else.
+    if (frame.identifier == GRA_ID && !frame.extd) {
+      graOtherSenderMs = millis();
+    }
+
     DEBUG_CHASSIS_CAN_("RX length=%u ID=0x%03X data=", frame.data_length_code, frame.identifier);
     for (uint8_t i = 0; i < frame.data_length_code; i++) {
       DEBUG_CHASSIS_CAN_("%02X ", frame.data[i]);
@@ -334,12 +342,16 @@ void broadcastButtonsCAN() {
 void broadcastGRATask(void* parameter) {
   (void)parameter;
 
-  static const uint32_t kGraPulseMs   = 80;  // how long to hold the paddle command active
-  static const uint32_t kGraRefreshMs = 20;  // GRA frame broadcast interval
+  static const uint32_t kGraPulseMs       = 80;    // how long to hold the paddle command active
+  static const uint32_t kGraRefreshMs     = 20;    // GRA frame broadcast interval
+  static const uint8_t  kGraCounterMax    = 15;    // byte 2 counter runs 0-15, then back to 0
+  static const uint8_t  kGraSender        = 0;     // ** CAN CHANGE THIS ** GRA_Sender: 0 = body module, 1 = column stalk 6 buttons, 2 = MQB-style wheel (MFL Gen 2), 3 = column stalk 4 buttons
+  static const uint32_t kGraOtherSenderMs = 1000;  // a 0x38A from another module in this long = a real gateway is sending it, so we stay quiet
 
-  uint8_t  counter       = 0;
-  uint8_t  activeCommand = 0x00;
-  uint32_t activeUntilMs = 0;
+  uint8_t  counter        = 0;
+  uint8_t  activeCommand  = 0x00;
+  uint32_t activeUntilMs  = 0;
+  bool     wasOtherSender = false;  // last loop's answer, so the log line is only written when it changes
 
   while (true) {
     // Latch pending paddle inputs.
@@ -366,17 +378,24 @@ void broadcastGRATask(void* parameter) {
       dsgPaddleDown = false;
     }
 
-    // Build the GRA frame.
-    // Layout (matches Can2Cluster broadcastGRA):
-    //   [0] CRC   = data[2] ^ data[3]  (XOR of counter and command)
-    //   [1] 0x00  always
-    //   [2] counter — free-running 0x00 → 0xFF
-    //   [3] command — 0x02 up / 0x01 down / 0x00 idle
+    // Build the GRA_Neu frame. Byte map from the VW PQ35/46 K-matrix (V5.20.6F),
+    // opendbc agrees (same as Can2Cluster sendGraPaddleFrame):
+    //   [0] checksum = data[1] ^ data[2] ^ data[3]
+    //   [1] cruise buttons (main switch, cancel, up/down) — all 0
+    //   [2] bits 4-7 message counter 0-15, bits 2-3 sender code,
+    //       bit 1 cruise RESUME = 0, bit 0 cruise SET = 0
+    //   [3] command — 0x02 up / 0x01 down / 0x03 both / 0x00 idle
+    //       (bit 1 GRA_Tip_Up, bit 0 GRA_Tip_Down)
+    // Before this, byte 2 was a 0x00-0xFF counter: the real counter only moved
+    // every 16th frame, and cruise SET/RESUME read as pressed in about half the frames.
     twai_message_t frame = {};
     frame.identifier       = GRA_ID;
     frame.data_length_code = 4;
     frame.data[1]          = 0x00;
-    frame.data[2]          = counter;
+
+    const uint8_t counterBits = (uint8_t)(counter << 4);     // counter 0-15 into bits 4-7
+    const uint8_t senderBits  = (uint8_t)(kGraSender << 2);  // sender code into bits 2-3
+    frame.data[2] = counterBits | senderBits;
 
     if (activeCommand != 0x00 && (int32_t)(millis() - activeUntilMs) < 0) {
       frame.data[3] = activeCommand;
@@ -385,16 +404,33 @@ void broadcastGRATask(void* parameter) {
       activeCommand  = 0x00;
     }
 
-    frame.data[0] = frame.data[2] ^ frame.data[3];  // CRC
+    frame.data[0] = frame.data[1] ^ frame.data[2] ^ frame.data[3];  // checksum
 
-    // Only put frames on the bus when paddles are enabled.
-    if (paddlesEnabled) {
+    // A real gateway already sending 0x38A (spotted in pollCanRx) — stay quiet:
+    // two senders would make the counter jump about and the paddle bits flicker.
+    const uint32_t lastOtherMs = graOtherSenderMs;
+    const bool otherSender = lastOtherMs != 0 && (millis() - lastOtherMs) < kGraOtherSenderMs;
+    if (paddlesEnabled && otherSender != wasOtherSender) {
+      if (otherSender) {
+        logLine("GRA: another module is sending 0x38A, paddle frames paused");
+      } else {
+        logLine("GRA: 0x38A from another module stopped, paddle frames resumed");
+      }
+      wasOtherSender = otherSender;
+    }
+
+    // Only put frames on the bus when paddles are enabled and nobody else sends 0x38A.
+    if (paddlesEnabled && !otherSender) {
       if (twai_transmit(&frame, pdMS_TO_TICKS(10)) != ESP_OK) {
         DEBUG("GRA: transmit failed");
       }
     }
 
+    // Next counter value: 0-15, then back to 0
     counter++;
+    if (counter > kGraCounterMax) {
+      counter = 0;
+    }
     vTaskDelay(pdMS_TO_TICKS(kGraRefreshMs));
   }
 }

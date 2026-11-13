@@ -14,7 +14,7 @@
 #include "ver.h"
 #include "board.h"   // MFSW_BOARD_DEVKIT / MFSW_BOARD_S3 (set by platformio.ini)
 
-#define FW_VERSION "1.08"
+#define FW_VERSION "1.09"
 
 #define enableDebug 0
 #define debugIO 0

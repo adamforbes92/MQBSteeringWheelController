@@ -53,6 +53,7 @@ extern volatile bool passthruEnabled;
 
 extern volatile bool dsgPaddleUp;
 extern volatile bool dsgPaddleDown;
+extern volatile uint32_t graOtherSenderMs;  // millis() when a 0x38A from another module (a real gateway) last arrived, 0 = never
 extern bool buttonFound;
 
 extern ButtonMapping buttonMappings[kMaxButtonMappings];
@@ -163,8 +164,17 @@ extern volatile uint8_t mqbActByte3;
 // output (bytes 0/4 left at 0) and is the default so nobody's working setup
 // changes; PQ is new, additive behaviour — see buildChassisButtonFrame() in
 // LIN.cpp, modelled on github.com/Dimka8901/MQB-MFSW-PQ25's mqbToPq().
+//
+// MEB (ID.3 / ID.4 / ID.7 / ID. Buzz) sends and expects the same frame layout as
+// MQB — the 0x0E button frames captured from an MQB wheel in an ID.4 (PR #2,
+// waldo22) are laid out exactly like MQB — so the firmware treats MEB exactly
+// like MQB everywhere (LIN.cpp only ever tests for PQ). The only difference is in the button
+// codes: pre-2024 MEB cars ignore Previous/Next (0x16/0x15) and use Up/Down
+// (0x04/0x05) instead. That lives in the web UI's code table, not here.
 constexpr uint8_t CHASSIS_PROTOCOL_PQ  = 0;
 constexpr uint8_t CHASSIS_PROTOCOL_MQB = 1;
+constexpr uint8_t CHASSIS_PROTOCOL_MEB = 2;
+constexpr uint8_t CHASSIS_PROTOCOL_MAX = CHASSIS_PROTOCOL_MEB;
 extern volatile uint8_t chassisProtocol;
 
 extern volatile uint8_t latestLinButtonId;
