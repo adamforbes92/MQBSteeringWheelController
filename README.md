@@ -1,35 +1,31 @@
-# Atlas/Taos buttons (MQB) in ID.4/ID.Buzz/ID.x car (MEB)
+# MFSW Controller
 
-**Forked from Adam Forbes' amazing** [MQB Steering Wheel Controller project!](https://github.com/adamforbes92/MQBSteeringWheelController)
+The **MFSW Controller** is designed to allow control between PQ and MQB chassis and steering wheels on VAG and used as a man-in-the-middle adapter to control different steering wheels fitted into different marques.  It **reads button presses and backlight data from the steering-wheel LIN bus**, **re-maps** each new button to
+whatever your old hardware expects, and **sends** the result on up to four output
+channels at once: a **translated LIN frame**, a **CAN broadcast**, a **resistive
+(digital-potentiometer) line** for legacy resistor based radios (up to 10k), and a **high-side
+driver output** for switching a relay or light. An optional PWM **auxiliary light input** feeds
+automatic backlight dimming (for MK4 chassis, etc), and everything is configured from a phone over **Wi-Fi** —
+no laptop or serial cable needed in the car.
 
-The **MQB to MEB LIN translator** is software for a man-in-the-middle LIN board that allows installing
-real physical buttons from a VW Atlas or Taos (MQB platform) into a VW ID.4, ID. Buzz, ID.3, ID.7, etc.
+It runs under the Arduino framework on either of two PCBs from one codebase — the V1/V2
+boards with a plug-in **ESP32 DevKit V1 (WROOM-32)** (`pio run -e esp32dev`) or the S3 board
+with an **ESP32-S3-WROOM-1** soldered down, native USB-C and its own 3.3 V regulator
+(`pio run -e esp32-s3`) — and uses the
+[LIN_master_portable_Arduino](https://github.com/gicking/LIN_master_portable_Arduino)
+library for the LIN state machines, the ESP32 **TWAI** peripheral for CAN, and
+[X9C10X](https://github.com/RobTillaart/X9C10X) for the digital potentiometer. The board is
+picked at build time (`-DMFSW_BOARD_DEVKIT` / `-DMFSW_BOARD_S3`, see `include/board.h`);
+releases are packaged per board (`Releases/V<ver>/` for the DevKit, `Releases/V<ver>-S3/` for
+the S3) and the OTA tab only offers releases carrying images for the board it runs on.
 
-It **reads button presses and backlight data from the steering-wheel LIN bus**, **re-maps** each new button 
-to the format that the car expects, and **sends** the result back to the chassis on a **translated LIN frame**.
+> The buttons are designed with a known-good PQ baseline that you re-learn to suit your wheel.
 
-We have left most of Adam's code intact, so the project may also work to retrofit capacitive controls
-from an ID.x car into an MQB or MQB Evo car.  Everything is configured from a phone over **Wi-Fi** —
-no laptop or serial cable is needed in the car.
+![MFSW Controller Web UI — dashboard, backlight, setup, button builder, diagnostics and OTA](Images/mfswUI.png)
 
-The project runs on a small ESP32-based board that [Dan Julio, aka @djul](https://danjuliodesigns.com/) designed,
-which is small enough to be installed inside the steering wheel cavity between the airbag harness and
-buttons.
+![MFSW Controller Web UI — aux backlight calibration, LIN monitor and CAN logger](Images/mfswUI-2.png)
 
-In addition to Dan's board design, we had a tremendous amount of help from folks on the on the [VWIDTalk forums](https://www.vwidtalk.com/),
-especially Jan, [aka @JohnnyForElectric](https://github.com/johnyforelectric), who suggested that this
-mod was possible in the first place and did extensive troubleshooting, Johann aka @Valor, who worked 
-hard to dump and analzye the firmware from the Atlas buttons to see if we could modify them, and also 
-offered to design the board, and @Vol-4er, who helped analyze the button hardware and LIN frames.
-
-The effort all these folks put in was incredible, and made this project possible! Our journey is documented
-on the VWIDTalk forums [here.](https://www.vwidtalk.com/threads/i-have-real-steering-wheel-buttons.18466/)
-
-The codebase uses the [LIN_master_portable_Arduino](https://github.com/gicking/LIN_master_portable_Arduino) library for the LIN state machines.
-You must select `-DMFSW_BOARD_DEVKIT` at build time since our board is not the new S3 version, see `include/board.h`;
-releases are packaged as (`Releases/V<ver>/`) and the OTA tab only offers releases carrying images for the board it runs on.
-
-> We have changed the defaults to suit MQB buttons in an MEB-platform car, but you can re-learn buttons as you wish.
+![PCB Overview](Images/PCBOverview.png)
 
 ---
 
@@ -43,8 +39,8 @@ releases are packaged as (`Releases/V<ver>/`) and the OTA tab only offers releas
 | Temperature frame | Polls a wheel temperature frame (default ID `0x3A`) for display in the LIN monitor |
 | Configurable LIN IDs | All four incoming frame IDs are user-editable, so wheels using non-standard IDs are supported |
 | Wheel protocol | Selectable PQ / MQB wheel protocol; MQB wheels are enabled with a different backlight activation frame |
-| Chassis protocol | Independent PQ / MQB selector for the button frame sent to the chassis/BCM — any wheel↔chassis combination bridges (PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB) |
-| Protocol-aware button codes | Changing either protocol offers to update known PQ/MQB button codes to match — rows already learned or customised are left alone |
+| Chassis protocol | Independent PQ / MQB / MEB selector for the button frame sent to the chassis/BCM — any wheel↔chassis combination bridges (PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB, PQ/MQB wheel → MEB ID.x) |
+| Protocol-aware button codes | Changing either protocol offers to update known PQ/MQB/MEB button codes to match — rows already learned or customised are left alone |
 | BCM live status | Dashboard shows the chassis LIN light frame's brightness and raw bytes independently of the active backlight source, so BCM presence is visible even under Aux/Forced |
 | Settings import/export | Back up and restore the full configuration (including the button map) as a JSON file |
 | LIN monitor | A live event log of button and accessory activity, exportable as CSV, viewable and clearable from the UI |
@@ -52,6 +48,14 @@ releases are packaged as (`Releases/V<ver>/`) and the OTA tab only offers releas
 | Legacy PCB mode | Reverses RX/TX on **both** LIN channels for older boards (applied at boot) |
 | Button re-mapping | Up to **24** mappings, each with a name, original ID, new LIN ID, CAN bit, resistance and flags |
 | LIN output | Sends the translated button as a LIN master request on the chassis bus (configurable ID) |
+| CAN output | Broadcasts an 8-byte button frame (configurable ID, default `0x1E0`) on 500 kbit/s TWAI |
+| Paddle via CAN | Emits a GRA (cruise/shift) frame (`0x38A`) carrying paddle up/down |
+| Resistive output | Drives an X9C10X digital pot to emulate a resistor-ladder radio input (per button specified ohms) |
+| High-side driver | Switchable output (up to 5A) — momentary or latched per button, plus diagnostic override |
+| Latching outputs | Latch a button to hold its high-side, CAN and LIN outputs active until it is pressed again |
+| OpenHaldex control | Command an **OpenHaldex** mode from a button — a fixed mode or **Push-to-Next**, with closed-loop confirmation over CAN |
+| Aux backlight | PWM light input decoded to a brightness %, with learnable dim/bright duty calibration |
+| Forced / source-select backlight | Choose Aux PWM, forced fixed %, or pass-through LIN brightness |
 | Learn mode | Capture a wheel's button IDs and aux duty limits directly from the live bus |
 | Wi-Fi UI | Dashboard, setup, button builder, diagnostics, OTA |
 | OTA updates | Update from GitHub or by file upload on the OTA tab; Home Wi-Fi bridge mode; recovery page if the web UI is ever lost |
@@ -61,24 +65,56 @@ releases are packaged as (`Releases/V<ver>/`) and the OTA tab only offers releas
 
 ---
 
-### LIN only!
-We have removed CAN, PWM dimming, resistive pot and High-side driver to simplify our board, which is LIN only.
+### Purchase
+If you want to purchase an assembled controller, you can do so here: [LIN MFSW Controller - Forbes Automotive](https://forbes-automotive.com/products/lin-mfsw-controller)
 
 ## Compatibility
 
 Designed for VAG multi-function steering wheels that report buttons over a **LIN slave
-response** and (optionally) carry paddle shifters and a LIN-dimmed backlight. Button IDs and 
-LIN frame IDs are **car- and wheel-specific** — treat the
+response** and (optionally) carry paddle shifters and a LIN-dimmed backlight. Button IDs,
+LIN frame IDs and the CAN/GRA frame set are **car- and wheel-specific** — treat the
 shipped `buttonMappings[]` table (in [src/globals.cpp](src/globals.cpp)) as a known-good
-baseline and re-learn each button to suit your hardware. Both **MEB** and **MQB** are
+baseline and re-learn each button to suit your hardware. Both **PQ** and **MQB** are
 supported on **each side independently** — pick the wheel family in **Setup → Wheel
 Protocol** and the chassis/BCM family in **Setup → Chassis Protocol** (see
-[LIN Frame Structure](#lin-frame-structure--protocols)).
-If your wheel's buttons aren't recognised at all, watch
+[LIN Frame Structure](#lin-frame-structure--protocols)), so any combination bridges:
+PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB. **MEB** (ID.3 / ID.4 / ID.7 / ID. Buzz) is a third
+chassis choice, for fitting an MQB (or PQ) wheel to an ID.x car — see
+[MEB chassis](#meb-chassis-idx). If your wheel's buttons aren't recognised at all, watch
 the **LIN Monitor** while pressing them to find the frame and byte that change.
 
 > Frame IDs and calibration live in [include/defs.h](include/defs.h) and
-> [src/globals.cpp](src/globals.cpp).
+> [src/globals.cpp](src/globals.cpp). The resistive output values are tuned to your
+> radio's resistor ladder — characterise them with the **Test Resistance** diagnostic or a datasheet for your radio.
+
+---
+
+## Building from Source
+
+The firmware is a [PlatformIO](https://platformio.org/) project. On GitHub it lives in the
+**`PlatformIO/`** folder (the one holding `platformio.ini`), so open or `cd` into that folder.
+
+1. Install PlatformIO: the VS Code extension, or `pip install platformio` for the CLI.
+2. Build for your board:
+   - `pio run -e esp32dev` for the V1/V2 boards (ESP32 DevKit V1, 4 MB flash,
+     `partitions_mqbsteeringwheelcontroller.csv`)
+   - `pio run -e esp32-s3` for the S3 board (ESP32-S3-WROOM-1, 16 MB flash,
+     `partitions_mqbsteeringwheelcontroller_16MB.csv`)
+3. Flash the firmware with `pio run -e <env> -t upload`, and the web UI (`data/`) with
+   `pio run -e <env> -t uploadfs`. Both are needed on a fresh board. After that, the OTA tab
+   can update both.
+
+The LIN library is **vendored** in `lib/LIN master portable`. It is
+[gicking/LIN_master_portable_Arduino](https://github.com/gicking/LIN_master_portable_Arduino)
+1.9 plus a small patch, `getRawRxBuffer()` in `LIN_master_Base.h`, which the upstream library
+doesn't have. PlatformIO picks up `lib/` automatically, so don't install the upstream library
+as well. The other libraries (AsyncTCP, ESPAsyncWebServer, ArduinoJson, X9C10X) are fetched
+from `lib_deps`, and the ESP32 platform (pioarduino) is downloaded on the first build.
+
+> **macOS / Linux:** `platformio.ini` sets `build_dir` and `libdeps_dir` to
+> `${sysenv.SYSTEMDRIVE}/.platformio/mqbsteeringwheel-pio/…`, which keeps build output off a
+> synced folder on Windows. `SYSTEMDRIVE` only exists on Windows. Elsewhere, delete those
+> two lines (PlatformIO then uses `.pio/` inside the project) or point them at a writable folder.
 
 ---
 
@@ -90,6 +126,10 @@ the **LIN Monitor** while pressing them to find the frame and byte that change.
 | --- | --- |
 | Steering-wheel LIN (LIN 1) | LIN transceiver on `Serial1`, 19.2 kbit/s — the steering wheel is the slave, this device is master |
 | Chassis LIN (LIN 2) | LIN transceiver on `Serial2`, 19.2 kbit/s — reads light dimming value from chassis, sends translated buttons |
+| CAN | ESP32 TWAI + transceiver (TJA1050 / SN65HVD230), 500 kbit/s |
+| Aux light input | 12V PWM dimming signal → level-shifted / opto-isolated |
+| Resistive output | X9C10X digital potentiometer for the radio's resistor values |
+| High-side driver | Transistor output (OUTPUT1) for a relay / light (5A max.) |
 
 ### Pin Map
 
@@ -100,45 +140,62 @@ Defined in [include/defs.h](include/defs.h):
 | LIN 1 (wheel) | TX / RX | 17 / 16 | 17 / 16 |
 | LIN 2 (chassis) | TX / RX | 23 / 22 | 6 / 5 |
 | LIN 2 | Wake / CS (NSLP) | 18 / 19 | 18 / 15 |
+| CAN / TWAI | RX / TX | 13 / 14 | 13 / 14 |
+| Aux light | PWM input | 39 (input-only pin) | 7 |
+| Resistive pot (X9C10X) | UD / INC / CS | 25 / 26 / 27 | 9 / 10 / 11 |
+| High-side driver | Output ("High-Side MOSFET") | 21 | 21 |
 | Status LED | | 2 | 2 |
+| USB | D− / D+ | (DevKit's CH340) | 19 / 20 (native) |
 
-### Connectors
+> **S3 board:** flash over the USB-C port (USB-Serial-JTAG, no driver, no button presses). If a firmware ever leaves USB dead, hold `BOOT`, tap `RESET`, then flash. The 16 MB flash uses `partitions_mqbsteeringwheelcontroller_16MB.csv`; the DevKit keeps its 4 MB table.
 
-Our updated board has 2 connectors, a 6-pin for intercepting the airbag harness and a 4-pin for output the the buttons:
+### Main Connector
 
-> Viewed into the mating face: the pins are pin **1** (left) to pin **6** (right)
+The device breaks out to a single 12-way **MX23A12NF1** connector:
 
-6-pin male header (TE Connectivity 2331710-1)
+![Main Connector Pinout](Images/PCBPinout.png)
+
+> Viewed into the mating face: the top row runs pin **1** (right) to pin **6** (left), and
+> the bottom row runs pin **7** (right) to pin **12** (left).
+
 | Pin | Signal | Notes |
 | --- | --- | --- |
-| 1 | `GND` | Ground, passed through to 4-pin connector|
-| 2 | `PWR_IN` | 12 V Constant, passed through to 4-pin connector |
-| 3 | `LIN2` | Chassis LIN bus |
-| 4 | `CHASSIS_CANH` | NO CONNECTION |
-| 5 | `CHASSIS_CANL` | NO CONNECTIoN |
-| 6 | `SIG` | passed through to 4-pin connector |
-
-> Viewed into the mating face: the pins are pin **1** (left) to pin **4** (right)
-
-4-pin male header (TE Connectivity 2339204-4)
-| Pin | Signal | Notes |
-| --- | --- | --- |
-| 1 | `GND` | Ground |
-| 2 | `PWR_OUT` | 12 V Constant |
+| 1 | `PWR_IN` | 12 V switched / ignition supply |
+| 2 | `GND` | Ground |
 | 3 | `LIN1` | Steering-wheel LIN bus |
-| 4 | `SIG` | for cruise |
+| 4 | `LIN2` | Chassis LIN bus |
+| 5 | `CHASSIS_CANH` | CAN high |
+| 6 | `CHASSIS_CANL` | CAN low |
+| 7 | `ANALOG_LIGHT_IN` | PWM auxiliary backlight input |
+| 8 | `RA` | Resistive output (digital-pot wiper to the radio) |
+| 9 | `5V` | 5 V rail - typically not required |
+| 10 | `OUTPUT1` | High-side driver output |
+| 11 | — | Unused |
+| 12 | — | Unused |
 
 ---
 
+## Jumpers
+
+A set of on-board jumpers lets you adapt the board to the chassis without changing firmware.
+
+![Board Jumpers](Images/PCBJumpers.png)
+
 ### LIN1_MASTER
 
-The board is set as permanent master on **LIN 1** (the steering-wheel bus). This device is the master
-on the wheel bus.
+Enables the master pull-up on **LIN 1** (the steering-wheel bus). This device is the master
+on the wheel bus, so this jumper should normally remain fitted.
 
 ### LIN2_MASTER
 
-**LIN 2** (the chassis bus) is not configured as master since the J533 CAN gateway
-is the master driving the chassis LIN output.
+Enables the master pull-up on **LIN 2** (the chassis bus). Fit it when the adapter is the
+master driving the chassis LIN output; remove it if another module already provides the
+master pull-up on that bus.
+
+### R_TERM1
+
+The **CAN bus termination resistor**. If this is the only device on the CAN network, leave
+the jumper fitted. If other devices already terminate the bus, remove it.
 
 ---
 
@@ -155,18 +212,22 @@ Steering-wheel LIN (0x0E)          Chassis LIN light (0x0D)         Paddle bits
  read button ID + paddles           read dimming %               GRA frame 0x38A
         │                                  │                             │
         ▼ sendButtonLINFrame()             ▼ updateBacklightState()      ▼ (if Paddle via CAN)
- look up mapping                           LIN source
-        │                                  │
-        │                                  ▼ sendLightLINFrame() → wheel backlight
-        ▼
- chassis LIN out
- (if LIN Output on)
+ look up mapping ──────────────┐    aux / forced / LIN source
+        │                      │           │
+        │                      │           ▼ sendLightLINFrame() → wheel backlight
+        ▼                      ▼
+ chassis LIN out         canHoldFrame[] (bit set)
+ (if LIN Output on)            │
+                              ▼ debounceOutputTask (core 0, ~20 Hz)
+                    ┌──────────┼─────────────────────┐
+                    ▼          ▼                     ▼
+             CAN broadcast   high-side driver   resistive output (X9C10X)
+             (0x1E0, if on)  (momentary/latch)  (per-button ohms)
 ```
 
 ### Button Mapping
 
 Each of the up to 24 rows in the button map carries:
->We have left the CAN, resistive output, and other values in code despite not having hardware present!
 
 | Field | Meaning |
 | --- | --- |
@@ -184,19 +245,36 @@ When a mapped button is seen, its CAN bit is held for the configurable **Send on
 window (`canHoldMs`, 50–5000 ms) so brief presses still produce a clean pulse.
 
 Changing **Wheel Protocol** or **Chassis Protocol** prompts to update the rows the firmware
-independently knows both a PQ and MQB code for (see the button code table under
+independently knows a PQ, MQB and MEB code for (see the button code table under
 [LIN Frame Structure](#lin-frame-structure--protocols)) — a row already learned or typed to a
 real-world value no longer matches either known code, so it's left alone automatically. If
 none of your rows are on a recognised code, the prompt says so instead of offering to change
 anything.
 
+### OpenHaldex Control
+
+A button flagged for **OpenHaldex** commands a mode change on an **OpenHaldex**
+unit sharing the chassis CAN bus.
+The controller sends the requested mode on the external-control frame (`0x6A0`, `data[0]`
+= mode) and then watches the OpenHaldex broadcast (`0x6B0`, `data[6]` = current mode) to
+confirm it took effect, resending until the reported mode matches (or a 3-second timeout).
+**Push-to-Next** advances one mode per press using the last broadcast mode as its
+reference, rolling over after Expert. The Buttons tab shows the live OpenHaldex mode.
+
+> The OpenHaldex unit must have its **broadcast-over-CAN** option enabled — it is required
+> both to accept external mode commands and to provide the confirmation broadcast.
+
 ### Backlight Sources
 
 `updateBacklightState()` picks a brightness in priority order:
 
-1. ~~**Aux** — decode the PWM duty on GPIO 39, map it between the learned dim/bright duty limits to the LIN brightness range (0–`0x7F`).~~
-2. ~~**Forced** — hold a fixed user-set percentage.~~
+1. **Aux** — decode the PWM duty on GPIO 39, map it between the learned dim/bright duty
+   limits to the LIN brightness range (0–`0x7F`).
+2. **Forced** — hold a fixed user-set percentage.
 3. **LIN pass-through** — forward the chassis-bus dimming value read from ID `0x0D`.
+
+The Aux input is measured by an edge ISR that accumulates period/on-time over a 1-second
+window and averages hundreds of cycles to cancel optocoupler jitter.
 
 ---
 
@@ -205,10 +283,10 @@ anything.
 This controller is the LIN **master**: it sends a frame header and the wheel (the slave)
 replies. Because it's master on both buses, it can only ever see responses to headers it
 generates for its own configured IDs — it can't passively sniff arbitrary unknown traffic,
-since nothing else on either bus is a second master. MEB and MQB are supported on **each
+since nothing else on either bus is a second master. PQ and MQB are supported on **each
 side independently**: **Setup → Wheel Protocol** bridges what's sent to the wheel, and
-**Setup → Chassis Protocol** bridges what's sent to the chassis/BCM — so any combination of
-wheel and chassis can be bridged.
+**Setup → Chassis Protocol** bridges what's sent to the chassis/BCM — so any combination of PQ↔PQ,
+PQ↔MQB, MQB↔PQ, MQB↔MQB can be bridged.
 
 ### Backlight / activation frame — ID `0x0D` (master → wheel)
 
@@ -256,12 +334,32 @@ The translated button code always sits in **byte 1**; the surrounding bytes are 
 | Protocol | Byte 0 | Byte 1 | Byte 4 |
 | --- | --- | --- | --- |
 | MQB (default) | `0x00` | button code | `0x00` |
+| MEB | `0x00` | button code | `0x00` |
 | PQ | rolling counter \| `0x80` | button code | `0x60` |
 
 MQB is today's original, already-validated shape. The PQ shape is modelled on
 [Dimka8901/MQB-MFSW-PQ25](https://github.com/Dimka8901/MQB-MFSW-PQ25)'s `mqbToPq()` — worth
 confirming against a real PQ chassis capture, it hasn't been independently verified against
 real hardware here.
+
+### MEB chassis (ID.x)
+
+Added from [PR #2](https://github.com/adamforbes92/MQBSteeringWheelController/pull/2)
+(waldo22), who fits Atlas / Taos MQB buttons to an ID.4 / ID. Buzz. Their captures of MQB
+wheels in an ID.4 show the same `0x0E` / `0x0F` layout as MQB, so the firmware builds an MEB
+chassis frame exactly like an MQB one. What differs is two button codes: pre-2024 MEB cars
+ignore Previous / Next (`16` / `15`) and skip tracks with Menu▲ / Menu▼ (`04` / `05`) instead.
+Choosing **MEB** as the Chassis Protocol makes the change prompt map Previous → `04` and
+Next → `05`; every other known code is the same as MQB. 2024+ MEB cars reportedly accept
+`16` / `15`, so **MQB** may be the better choice there. None of this has been checked on our
+own bench. There is no MEB *wheel* protocol: the ID.x capacitive wheel hasn't been captured.
+
+The ID.4 gateway's own `0x0D` light frame (`0B 7F 0B 3F`, `00 7E 00 3F`, `64 7F E4 3F`) isn't
+laid out like MQB's `xx F9 FF FF`. The wheel never sees it: the controller sends the wheel its
+own `0x0D`, made of byte 0 of the chassis frame (forwarded as brightness, as on MQB; in those
+captures it reads `00`–`64`, which looks like a brightness but isn't confirmed) plus the
+activation bytes from **Setup → Activation preset**. waldo22 found `7F F9 FF FF` wakes the
+Atlas buttons, i.e. the **Custom** preset with `F9 FF FF`.
 
 ### Checksum
 
@@ -294,7 +392,7 @@ Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse
 | Tab | Purpose |
 | --- | --- |
 | **Dashboard** | Live active button (LIN ID + resolved name), CAN output frame with per-bit view, backlight source/state/brightness plus an independent **BCM** brightness tile, and raw incoming (wheel **and** BCM) / outgoing LIN + CAN frames |
-| **Setup** | **Wheel Protocol (PQ / MQB)** with an MQB activation preset, independent **Chassis Protocol (PQ / MQB)**, Broadcast-over-CAN toggle + CAN ID, Paddle via CAN, Send-on-CAN window, aux-light source, force backlight + brightness slider, LIN output enable + ID, **Legacy PCB (swap LIN RX/TX)**, the four **incoming LIN IDs** (button / accessory / temperature / light), and aux dim/bright duty calibration with **Learn** buttons |
+| **Setup** | **Wheel Protocol (PQ / MQB)** with an MQB activation preset, independent **Chassis Protocol (PQ / MQB / MEB)**, Broadcast-over-CAN toggle + CAN ID, Paddle via CAN, Send-on-CAN window, aux-light source, force backlight + brightness slider, LIN output enable + ID, **Legacy PCB (swap LIN RX/TX)**, the four **incoming LIN IDs** (button / accessory / temperature / light), and aux dim/bright duty calibration with **Learn** buttons |
 | **Buttons** | The button builder table — add/delete up to 24 rows, edit every field, **Learn** original/new LIN IDs directly from the wheel, assign latch or OpenHaldex control per button (with a live OpenHaldex mode readout), and **Export / Import** the whole configuration as JSON |
 | **Diagnostics** | Bus health (CAN / LIN 1 / LIN 2 — split into "any transaction" and "light frame specifically" / resistive), High-Side MOSFET test toggle, resistive-output hold, a stepped Test Resistance probe, and a live **LIN Monitor** log with **Passthru Mode** and CSV **Export** |
 | **CAN Logger** | A **CAN Monitor** that records frames seen on the bus (optionally one CAN ID only, and only when the bytes change) with SavvyCAN-ordered CSV export, plus the **SavvyCAN Analyzer** toggles to forward all traffic over WiFi (GVRET) or USB serial — see [CAN Logger](#can-logger) below |
@@ -556,6 +654,10 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.09 — MEB (ID.x) chassis protocol, from PR #2: same frame as MQB, with pre-2024 MEB's
+        Previous/Next codes (04/05) in the protocol-change prompt; changing the
+        chassis now also translates a same-family table (e.g. the PQ→PQ default);
+        the prompt no longer treats paddle/horn rows as button codes
 V1.08 — Scroll-wheel wizard: when Learn finds a scroll wheel it asks for Scroll UP,
         Scroll DOWN and an optional Press, then saves one row per movement in one
         go (adding the partner row straight after Learn often failed to take);

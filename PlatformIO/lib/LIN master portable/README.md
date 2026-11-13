@@ -1,0 +1,113 @@
+<p align="center">
+  <img width="200" height="200" src="./extras/documentation/Logo_large.jpg">
+</p>
+
+Portable LIN Master Node Emulation
+==================================
+
+[Doxygen docs](https://gicking.github.io/LIN_master_portable_Arduino/extras/documentation/html/index.html)
+
+
+# Introduction
+
+This Arduino library implements a Local Interconnect Network master node emulation. For an explanation of the LIN bus and protocol e.g. see https://en.wikipedia.org/wiki/Local_Interconnect_Network.
+
+Optionally LIN protocoll via RS485 is supported (see respective examples). In this case Rx-enable (=RE) must be statically enabled to receive LIN echo, and Tx-enable (=DE) is controlled by the Arduino. 
+
+The class structure is very flexible and aims at supporting different Serial interfaces and architectures. It can easily be ported to other boards - in which case a pull request is highly appreciated... 
+
+For a similar Arduino libary for LIN slave emulation see https://github.com/gicking/LIN_slave_portable_Arduino
+
+## Supported functionality
+  - blocking and non-blocking operation
+  - multiple, simultaneous LIN nodes
+  - supports HardwareSerial and SoftwareSerial
+  - supports LIN protocoll via RS485 with Tx direction switching
+  
+## Supported Boards (with additional LIN hardware)
+  - Arduino AVR boards, e.g. [Uno](https://store.arduino.cc/products/arduino-uno-rev3), [Mega](https://store.arduino.cc/products/arduino-mega-2560-rev3) or [Nano](https://store.arduino.cc/products/arduino-nano)
+  - Arduino AVR Cortex-M boards, e.g. [Due](https://store.arduino.cc/products/arduino-due)
+  - Arduino Renesas Cortex-M boards, e.g. [Uno R4 Minima](https://docs.arduino.cc/hardware/uno-r4-minima/) (only SoftwareSerial)
+  - ATtiny boards, e.g. [Adafruit Trinket](https://www.adafruit.com/product/1501) (only SoftwareSerial)
+  - ESP32 boards, e.g. [Arduino Nano-ESP32](https://docs.arduino.cc/hardware/nano-esp32/) or [Espressif Wroom-32U](https://www.etechnophiles.com/esp32-dev-board-pinout-specifications-datasheet-and-schematic/)
+  - ESP8266 boards, e.g. [Wemos D1 mini](https://www.wemos.cc/en/latest/d1/d1_mini.html)
+  - STM32 boards, e.g. [Nucleo-STM32L432KC](https://www.st.com/en/evaluation-tools/nucleo-l432kc.html)
+
+
+## Notes
+
+  - The sender state machine relies on reading back its 1-wire echo. If no LIN or K-Line transceiver is used, connect Rx&Tx (only one Tx to avoid damage)
+
+  - For background operation, the `handler()` method must be called at least every 500us, especially after initiating a frame. Optionally it can be called from within [serialEvent()](https://reference.arduino.cc/reference/de/language/functions/communication/serial/serialevent/)
+
+  - For ESP32 and ESP8266, library `EspSoftwareSerial` must be installed, even if `SoftwareSerial` is not used in project 
+  
+
+# Test Matrix
+
+An *ok* in the below test matrix indicates that normal master request frames are sent, slave responses are received and bus disconnection is detected (-> error). Also, code execution starts with only external supple, i.e. USB not connected. No extensive testing of *all* possible error cases was performed. Please let me know if you experience unexpected errors.
+
+![Test Matrix](./extras/testing/Board_Tests.png?)
+
+Logic analyzer screenshots of LIN bus, idle pin and error pin levels are stored in folder "./extras/testing/*Board*"
+
+
+Have fun!, Georg
+
+----------------
+
+Revision History
+----------------
+
+**v1.9 (2026-02-05)**
+  - add support for ESP32-S3, Nano Every, STM32, and Uno R4 Minima (no HWSerial, see [issue](https://github.com/arduino/ArduinoCore-renesas/issues/524))
+  - consolidate examples for different boards and LIN/RS485 interfaces
+  - remove `Ticker` examples, due to standard 1ms min. period too long
+  - remove `Event` examples, due to `serialEvent()`offers no benefit and is [becoming obsolete](https://docs.arduino.cc/language-reference/en/functions/communication/serial/serialEvent/)
+
+**v1.8 (2025-10-28)**
+  - add dependency on `EspSoftwareSerial` in `library.properties`
+  - add notes for `EspSoftwareSerial` dependency
+  - in ESP32 Ticker example use standard `Ticker.attach()` instead of Espressif specific `Ticker.attach_us()`. Note: ESP8266 has 1ms minimum
+  - add ESP32 Nano w/ Arduino ESP32 core to integration tests
+
+**v1.7 (2025-05-03)**
+  - harmonize with [LIN slave portable](https://github.com/gicking/LIN_slave_portable_Arduino)
+  - simplified debug output via macro
+  - renamed `SERIAL_DEBUG` to `SERIAL_CONSOLE` to avoid mixup with (internal) debug output
+  - full regresstion tests and add some comments
+  - update reference
+  
+**v1.6 (2025-04-27)**
+  - for clarity add "this->" for all internal method calls and class variable access  
+  - full regresstion tests and add some comments
+  - update reference
+
+**v1.5 (2025-04-26)**
+  - add optional timeout to debug Serial begin(). Is relevant for native USB ports if no USB is connected
+
+**v1.4 (2025-01-26)**
+  - replace `*Stream` in LIN base class by actual serial interface to reduce overhead
+  - add library reference via [Doxygen](https://www.doxygen.nl/)
+  - increase frame timeout to handle slow slave responses
+  - improve CI test coverage via Github Actions
+  - performed recursion tests in above test matrix
+
+**v1.3 (2024-12-14)**
+  - add support for LIN protocol via RS485 PHY
+  - add Github Actions for CI tests  
+  - add more examples  
+  - increase test coverage  
+
+**v1.2 (2023-06-02)**
+  - Make SoftwareSerial optional for ESP32 to avoid library issue
+  - add examples & increase test coverage for more boards  
+
+**v1.1 (2022-12-10)**
+  - minor cosmetic changes and bugfixes
+  - changed name to meet Arduino naming conventions. Specifically omit "(" and ")"
+
+**v1.0 (2022-12-10)**
+  - initial release
+  - supersedes less portable [LIN master library](https://github.com/gicking/LIN_master_Arduino)
+
