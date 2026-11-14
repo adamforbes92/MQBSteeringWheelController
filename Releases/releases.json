@@ -1,11 +1,54 @@
 {
   "product": "MQBSteeringWheelController",
-  "latest": "1.08",
+  "latest": "1.09",
   "latestByBoard": {
-    "esp32": "1.08",
-    "esp32s3": "1.08"
+    "esp32": "1.09",
+    "esp32s3": "1.09"
   },
   "releases": [
+    {
+      "version": "1.09",
+      "channel": "stable",
+      "date": "2026-11-14",
+      "ota": true,
+      "notes": "MEB (ID.x) chassis protocol: fit an MQB or PQ wheel to an ID.3/ID.4/ID.7/ID. Buzz, with pre-2024 MEB Previous/Next codes. Changing the chassis protocol now updates the default button table too. GRA paddle frames pause when another module already sends them.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.09/firmware.bin",
+            "size": 1186416,
+            "sha256": "c79956ed6b412fd472ebb0de36d75d3d0458691b5215c50296edd248a24d8278"
+          },
+          "filesystem": {
+            "path": "V1.09/littlefs.bin",
+            "size": 655360,
+            "sha256": "87bd958b851c1bcd51faba7722879629854726e096d489525d857f4372986b27"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.09-S3/firmware.bin",
+            "size": 1166240,
+            "sha256": "e85c05e25dd37fc87fecb3f9b6b66280a221c15273409dae420e78996ee70a94"
+          },
+          "filesystem": {
+            "path": "V1.09-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "2913f8092972d6c01bbbd2f17845d4ffdf438b73ff972414733cfa4ed7fd6e0e"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.09/firmware.bin",
+        "size": 1186416,
+        "sha256": "c79956ed6b412fd472ebb0de36d75d3d0458691b5215c50296edd248a24d8278"
+      },
+      "filesystem": {
+        "path": "V1.09/littlefs.bin",
+        "size": 655360,
+        "sha256": "87bd958b851c1bcd51faba7722879629854726e096d489525d857f4372986b27"
+      }
+    },
     {
       "version": "1.08",
       "channel": "stable",
