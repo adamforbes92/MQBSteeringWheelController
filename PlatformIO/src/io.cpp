@@ -104,10 +104,38 @@ void setupPins() {
   radioResistor.setPosition(radioResistor.Ohm2Position(digipotMaxOhm), true);
 }
 
+// Reopen the steering-wheel UART (Serial1) with a new frame format and speed —
+// LIN is 8N1, the BMW K-bus 8E1 — on the same pins basicInit() chose,
+// including the Legacy-PCB RX/TX swap. Fully releases the pads first, for the
+// reason given in basicInit(). Caller holds steeringWheelLinMutex.
+void reopenWheelUart(uint32_t baud, uint32_t config) {
+  Serial1.end();
+  gpio_reset_pin(static_cast<gpio_num_t>(pinRX_LINSteeringWheel));
+  gpio_reset_pin(static_cast<gpio_num_t>(pinTX_LINSteeringWheel));
+  if (linLegacyPins) {
+    Serial1.begin(baud, config, pinTX_LINSteeringWheel, pinRX_LINSteeringWheel);
+  } else {
+    Serial1.begin(baud, config, pinRX_LINSteeringWheel, pinTX_LINSteeringWheel);
+  }
+}
+
 void basicInit() {
-#if enableDebug
-  Serial.begin(115200);
+  // Serial console is always on (115200): logLine() mirrors every LIN Monitor
+  // line here. Up to V1.09 this was only started with enableDebug, so a release
+  // build printed nothing over USB.
+#if MFSW_HAS_NATIVE_USB
+  // S3 native USB (already started by the core, CDC on boot): writes never
+  // block with no host attached; with one attached, cap the wait at 10 ms so a
+  // terminal that's open but not reading can't stall the LIN tasks. (Don't
+  // resize its TX ring here — that frees the buffer under a running USB ISR.)
+  Serial.setTxTimeoutMs(10);
+#else
+  // DevKit UART0: a TX ring buffer (must be set before begin()) so log lines
+  // queue instead of blocking the LIN tasks on the 128-byte hardware FIFO.
+  Serial.setTxBufferSize(4096);
 #endif
+  Serial.begin(115200);
+  Serial.printf("\r\n[BOOT] MFSW Controller fw %s (%s)\r\n", FW_VERSION, MFSW_BOARD_NAME);
 
   DEBUG("VW Steering Wheel LIN Controller Initialising...");
 

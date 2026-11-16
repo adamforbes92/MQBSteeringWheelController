@@ -8,7 +8,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="style.css?v=1.09">
+  <link rel="stylesheet" href="style.css?v=1.12">
 </head>
 
 <body>
@@ -34,6 +34,7 @@
     </nav>
 
     <section id="tab-dashboard" class="panel active">
+      <div class="detect-banner" data-detect-banner hidden></div>
       <article class="card">
         <h2>Active Button</h2>
         <div class="grid-2">
@@ -101,19 +102,32 @@
     </section>
 
     <section id="tab-setup" class="panel">
-      <article class="card">
-        <h2>General Setup</h2>
+      <article class="card no-collapse">
+        <h2>Wheel &amp; car</h2>
+        <div class="detect-banner" data-detect-banner hidden></div>
         <div class="form-grid">
 
           <label>
-            Wheel Protocol
+            Wheel Protocol (the wheel fitted now)
             <select id="wheelProtocol">
-              <option value="0">PQ (older VAG)</option>
-              <option value="1">MQB (2016+ / Evo)</option>
+              <optgroup label="VW group">
+                <option value="0">PQ (older VAG)</option>
+                <option value="1">MQB (2016+ / Evo)</option>
+                <option value="2">VAG LIN 1.3 (Audi A4/A8, early Golf 5 / Leon / Octavia 2; frame 0x30)</option>
+                <option value="3">VW Up! / Skoda Citigo / Seat Mii</option>
+              </optgroup>
+              <optgroup label="Other brands (wheel &rarr; outputs)">
+                <option value="4">Volvo P1 (V50 / S40 / C30 / C70)</option>
+                <option value="5">Volvo P3 (V40 2012+, S60 / V60 / XC60 2011&ndash;18)</option>
+                <option value="6">BMW E-series / Mini R5x (K-bus, listen only)</option>
+              </optgroup>
+              <optgroup label="Anything else">
+                <option value="7">Custom (set in Advanced &rarr; Custom wheel)</option>
+              </optgroup>
             </select>
           </label>
           <label>
-            Chassis Protocol
+            Chassis Protocol (the car)
             <select id="chassisProtocol">
               <option value="1">MQB (default)</option>
               <option value="0">PQ (older VAG)</option>
@@ -142,9 +156,22 @@
               <input id="mqbActByte3" type="text" maxlength="2" placeholder="00">
             </label>
           </div>
+          <p class="hint" style="margin-bottom:0">
+            Changes save straight away. Fitting a different wheel? Use
+            <strong>Buttons &rarr; Fit a new wheel</strong>, which sets these for you.
+          </p>
+          <div class="app-status status-line"></div>
+        </div>
+      </article>
 
-          <hr class="form-divider">
+      <article class="card">
+        <h2>Advanced</h2>
+        <p class="hint">
+          Expert settings. Most installs never need to change anything here.
+        </p>
+        <div class="form-grid">
 
+          <h3 class="sub-head">CAN output</h3>
           <label class="toggle-row">
             <span>Broadcast Over CAN</span>
             <input id="canBroadcastEnabled" type="checkbox">
@@ -179,6 +206,7 @@
 
           <hr class="form-divider">
 
+          <h3 class="sub-head">Drive Select (Charisma)</h3>
           <label>
             Charisma (Drive Select)
             <select id="charismaMode">
@@ -224,6 +252,7 @@
 
           <hr class="form-divider">
 
+          <h3 class="sub-head">Backlight</h3>
           <label class="toggle-row">
             <span>Use Aux Light Input</span>
             <input id="hasAuxLight" type="checkbox">
@@ -239,6 +268,7 @@
 
           <hr class="form-divider">
 
+          <h3 class="sub-head">LIN output to the car</h3>
           <label class="toggle-row">
             <span>Enable LIN Output</span>
             <input id="linOutputEnabled" type="checkbox">
@@ -250,11 +280,12 @@
 
           <hr class="form-divider">
 
+          <h3 class="sub-head">Wheel bus (LIN 1)</h3>
           <label class="toggle-row">
             <span>Legacy PCB (swap LIN RX/TX)</span>
             <input id="linLegacyPins" type="checkbox">
           </label>
-          <hr class="form-divider">
+          <p class="hint" style="margin-bottom:0">Early boards only. Changing it reboots the device.</p>
 
           <label>
             Button ID_LIN in (hex)
@@ -294,6 +325,103 @@
           </p>
           <hr class="form-divider">
 
+          <h3 class="sub-head" id="customWheel">Custom wheel</h3>
+          <p class="hint" id="cwInactiveHint">
+            Used only when Wheel Protocol is <strong>Custom</strong>.
+          </p>
+          <div id="cwFields" class="form-grid cw-grid">
+            <p class="hint">
+              For a LIN wheel with no profile of its own. Run
+              <strong>Diagnostics &rarr; LIN Monitor &rarr; Scan LIN1</strong> with the wheel
+              connected: it lists every ID that answers, its length, checksum and speed.
+              <button id="cwFromScan" class="btn tiny secondary" type="button">Fill from last scan</button>
+            </p>
+            <label>
+              Bus speed
+              <select id="cwBaud">
+                <option value="19200">19200 (VW / Audi / Tesla)</option>
+                <option value="10417">10417 (GM, reportedly)</option>
+                <option value="9600">9600 (Volvo, Jeep)</option>
+              </select>
+            </label>
+            <label>
+              Checksum
+              <select id="cwChecksum">
+                <option value="2">Auto (whichever the wheel's answer passes)</option>
+                <option value="0">Enhanced (LIN 2.x)</option>
+                <option value="1">Classic (LIN 1.x)</option>
+              </select>
+            </label>
+            <label>
+              Button frame ID (hex)
+              <input id="cwBtnId0" type="text" maxlength="2" placeholder="0E">
+            </label>
+            <label>
+              Its length (0 = find out)
+              <input id="cwBtnLen0" type="number" min="0" max="8" step="1" placeholder="0">
+            </label>
+            <label>
+              Second button frame ID (hex, blank = none)
+              <input id="cwBtnId1" type="text" maxlength="2" placeholder="">
+            </label>
+            <label>
+              Its length (0 = find out)
+              <input id="cwBtnLen1" type="number" min="0" max="8" step="1" placeholder="0">
+            </label>
+            <label>
+              Buttons are&hellip;
+              <select id="cwDecoder">
+                <option value="0">a code in one byte (VW-style)</option>
+                <option value="1">one bit each (Volvo-style)</option>
+              </select>
+            </label>
+            <label id="cwCodeByteRow">
+              Code byte (0&ndash;7)
+              <input id="cwCodeByte" type="number" min="0" max="7" step="1" placeholder="1">
+            </label>
+            <label id="cwRollerByteRow">
+              Scroll byte (0&ndash;7, blank = none)
+              <input id="cwRollerByte" type="number" min="0" max="7" step="1" placeholder="">
+            </label>
+            <p class="hint">
+              Every bit or code the wheel sends becomes a code you <strong>Learn</strong> in
+              the button table as usual. One bit each: frame 1's bits are codes
+              40&ndash;7F, frame 2's 80&ndash;BF. A byte that changes on every frame
+              (a counter) is ignored automatically.
+            </p>
+            <label>
+              Frame sent to the wheel (hex, blank = none)
+              <input id="cwLightId" type="text" maxlength="2" placeholder="">
+            </label>
+            <label>
+              Its length (1&ndash;8)
+              <input id="cwLightLen" type="number" min="1" max="8" step="1" placeholder="4">
+            </label>
+            <label>
+              Its bytes (hex)
+              <input id="cwLightData" type="text" maxlength="23" placeholder="FF 00 00 00">
+            </label>
+            <label>
+              Brightness byte (0&ndash;7, blank = none)
+              <input id="cwLightBrightByte" type="number" min="0" max="7" step="1" placeholder="">
+            </label>
+            <label>
+              Full brightness value (hex)
+              <input id="cwLightBrightMax" type="text" maxlength="2" placeholder="7F">
+            </label>
+            <label>
+              Send every (ms)
+              <input id="cwLightEveryMs" type="number" min="100" max="2000" step="50" placeholder="100">
+            </label>
+            <p class="hint">
+              The frame sent to the wheel is usually what lights its buttons (and on some
+              wheels, what wakes it). To find it, connect LIN 2 to the original car's
+              wheel wire: the LIN Monitor logs every frame the car sends there.
+            </p>
+          </div>
+          <hr class="form-divider">
+
+          <h3 class="sub-head">Resistive output</h3>
           <label class="toggle-row">
             <span>Use 20 k&Omega; Digital Potentiometer</span>
             <input id="digipot20kEnabled" type="checkbox">
@@ -323,6 +451,14 @@
     </section>
 
     <section id="tab-buttons" class="panel">
+      <!-- Fit a new wheel: guided two-pass Learn. Built by renderFit() in app.js;
+           learns with probe Learns (nothing is written to a row by the
+           firmware) and applies each pass to the table itself. -->
+      <article id="fitCard" class="card no-collapse fit-card">
+        <h2>Fit a new wheel</h2>
+        <div id="fitBody"></div>
+      </article>
+
       <article class="card">
         <h2>Button Builder</h2>
         <div id="learnBuilderBanner" class="learn-banner">Learn mode idle.</div>
@@ -336,31 +472,37 @@
         <div id="unsavedBanner" class="unsaved-banner" style="display:none">
           Unsaved changes &mdash; press <strong>Save Setup</strong> below the table to keep them.
         </div>
+        <p class="hint table-hint">
+          <strong>From wheel</strong> is the code the fitted wheel sends for this
+          button; <strong>To car</strong> is the code passed on to the car in its
+          place. Codes are hex (e.g. 0E). Press <strong>Learn</strong> in a cell,
+          then the button on the wheel, to capture it.
+        </p>
         <div class="table-wrap">
           <table class="mapping-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Button Ori</th>
-                <th>Learn</th>
-                <th>Button New</th>
-                <th>Learn</th>
-                <th>CAN Byte</th>
-                <th>CAN Bit</th>
-                <th>Resistive (&Omega;)</th>
-                <th>MOSFET</th>
-                <th>Latch</th>
-                <th>OpenHaldex</th>
-                <th>OH Mode</th>
-                <th>Charisma</th>
-                <th>Trigger</th>
-                <th>Delete</th>
+                <th class="c-name">Name</th>
+                <th class="c-more">Outputs</th>
+                <th class="c-from" title="Code the fitted wheel sends (matched on the wheel bus)">From wheel</th>
+                <th class="c-to" title="Code passed on to the car on the chassis LIN output">To car</th>
+                <th class="w-canbyte">CAN Byte</th>
+                <th class="w-canbit">CAN Bit</th>
+                <th class="w-res">Resistive (&Omega;)</th>
+                <th class="w-chk">MOSFET</th>
+                <th class="w-chk">Latch</th>
+                <th class="w-oh">OpenHaldex</th>
+                <th class="w-ohmode">OH Mode</th>
+                <th class="w-cha">Charisma</th>
+                <th class="w-trig">Trigger</th>
+                <th class="w-del">Delete</th>
               </tr>
             </thead>
             <tbody id="mappingRows"></tbody>
           </table>
         </div>
 
+        <div class="app-status status-line"></div>
         <div class="button-row">
           <button id="addRowBtn" class="btn secondary">Add Row</button>
           <button id="saveSetupBtn" class="btn">Save Setup</button>
@@ -487,7 +629,9 @@
           </label>
           <button id="logExportBtn" class="btn secondary">Export (CSV)</button>
           <button id="logClearBtn" class="btn secondary">Clear</button>
+          <button id="linScanBtn" class="btn secondary" type="button" title="Ask every LIN ID (0x00-0x3B) on the wheel bus and list what answers (about 1 s)">Scan LIN1</button>
         </div>
+        <div id="linScanResult" class="scan-result" hidden></div>
         <pre id="logView" class="log-view" aria-label="LIN monitor results"></pre>
       </article>
     </section>
@@ -661,8 +805,8 @@
     </section>
   </main>
 
-  <script src="app.js?v=1.09"></script>
-  <script src="ota.js?v=1.09"></script>
+  <script src="app.js?v=1.12"></script>
+  <script src="ota.js?v=1.12"></script>
 </body>
 
 </html>

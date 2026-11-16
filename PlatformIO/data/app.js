@@ -18,6 +18,7 @@ function setRollerCodes(list) {
 // below a wide table and is easy to walk away from. So: mark the table dirty on
 // any edit, show it, and ask before leaving the tab or the page.
 let mappingsDirty = false;
+let setupLoaded = false;  // the first /api/setup load has filled the controls
 
 function setMappingsDirty(dirty) {
   mappingsDirty = dirty;
@@ -153,7 +154,9 @@ const WIZ_PROMPT = {
 let wiz = null;           // open wizard, null when closed
 let lastProbeSeq = null;  // firmware's learnProbeSeq as of the last status poll
 
-function openScrollWizard(idx) {
+// opts.fromFit: opened by the Fit a new wheel wizard, which carries on with
+// its next button once this closes (see fitAfterScrollWizard()).
+function openScrollWizard(idx, opts = {}) {
   const row = mappings[idx];
   if (!row || wiz) return;
   // The wizard owns this row from here: stop the Learn backstop merging into
@@ -177,22 +180,29 @@ function openScrollWizard(idx) {
     until: 0,
     baseSeq: null,
     note: "",
+    fromFit: !!opts.fromFit,
   };
   const name = String(row.name || "").replace(/\s+(up|down|press)$/i, "");
   document.getElementById("wizName").value =
     (!name || name === "New Button" ? "Scroll" : name).slice(0, 17);
-  document.getElementById("wizIntro").textContent =
-    `Row ${idx + 1} is on scroll wheel ${hexCode(wiz.code)}. Teach it each movement below. ` +
-    `Nothing changes until you press Add rows, which replaces row ${idx + 1} with one row per movement.`;
+  document.getElementById("wizIntro").textContent = wiz.fromFit
+    ? `That was a scroll wheel (${hexCode(wiz.code)}), so "${row.name}" needs one row per movement. ` +
+      `Teach it each movement below, then press Add rows. Cancel keeps "${row.name}" on the scroll wheel as one row.`
+    : `Row ${idx + 1} is on scroll wheel ${hexCode(wiz.code)}. Teach it each movement below. ` +
+      `Nothing changes until you press Add rows, which replaces row ${idx + 1} with one row per movement.`;
   document.getElementById("scrollWizard").hidden = false;
   renderWizard();
   armNextWizardStep();
 }
 
-function closeScrollWizard() {
+// finished: true when called by finishScrollWizard(), which tells the fit
+// wizard itself once the rows are in. Any other close is a cancel.
+function closeScrollWizard(finished = false) {
   if (wiz && wiz.armed) fetch("/api/learn/cancel", { method: "POST" }).catch(() => {});
+  const fromFit = wiz && wiz.fromFit;
   wiz = null;
   document.getElementById("scrollWizard").hidden = true;
+  if (fromFit && !finished) fitAfterScrollWizard(null);
 }
 
 async function armWizardStep(step) {
@@ -358,13 +368,15 @@ function finishScrollWizard() {
     });
   }
 
-  closeScrollWizard();
+  const fromFit = wiz.fromFit;
+  closeScrollWizard(true);
   mappings.splice(idx, 1, ...rows);
   renderMappings();
   // Indices only move now, with no Learn armed, and the device gets the whole
   // set in one go.
   saveSetup();
   setStatus(`Scroll wheel ${hexCode(code)}: row ${idx + 1} replaced with ${rows.length} rows.`);
+  if (fromFit) fitAfterScrollWizard(rows);
 }
 
 function wireScrollWizard() {
@@ -389,7 +401,7 @@ function wireScrollWizard() {
     renderWizard();
   });
   document.getElementById("wizAddBtn").addEventListener("click", finishScrollWizard);
-  document.getElementById("wizCancelBtn").addEventListener("click", closeScrollWizard);
+  document.getElementById("wizCancelBtn").addEventListener("click", () => closeScrollWizard());
 }
 
 async function forgetRollerCodes() {
@@ -446,14 +458,28 @@ const CODE_COLUMN_FAMILY = [0, 1, 1];
 // Current selectors as KNOWN_BUTTON_CODES columns: wheel 0 PQ / 1 MQB,
 // chassis 0 PQ / 1 MQB / 2 MEB. sameFamily is true for PQ->PQ, MQB->MQB and
 // MQB->MEB — the pairs where a button keeps its code (bar MEB's Previous/Next).
+// Wheel profiles whose codes are this firmware's own decoding, not a VW button
+// set: VAG LIN 1.3 (2), Volvo P1 / P3 (4 / 5), BMW K-bus (6), Custom (7). The
+// Up! / Citigo / Mii wheel (3) sends PQ codes, so it counts as PQ.
+const DECODED_WHEELS = ["2", "4", "5", "6", "7"];
+function wheelIsDecoded(v) {
+  const wp = v != null ? String(v) : document.getElementById("wheelProtocol").value;
+  return DECODED_WHEELS.includes(wp);
+}
+// Profiles that answer VW's 0x0E frame (PQ, MQB, Up!).
+const VW_0E_WHEELS = [0, 1, 3];
+
 function protocolColumns() {
-  const wheelCol = document.getElementById("wheelProtocol").value === "1" ? 1 : 0;
+  const wp = document.getElementById("wheelProtocol").value;
+  const wheelCol = wp === "1" ? 1 : 0;
   const cp = document.getElementById("chassisProtocol").value;
   const chassisCol = cp === "2" ? 2 : cp === "1" ? 1 : 0;
   return {
     wheelCol,
     chassisCol,
-    sameFamily: CODE_COLUMN_FAMILY[wheelCol] === CODE_COLUMN_FAMILY[chassisCol],
+    // A LIN 1.3 wheel (2) is not treated as sharing codes with any chassis:
+    // its decoded codes are its own, so they are never passed through as-is.
+    sameFamily: !wheelIsDecoded(wp) && CODE_COLUMN_FAMILY[wheelCol] === CODE_COLUMN_FAMILY[chassisCol],
   };
 }
 
@@ -542,6 +568,12 @@ function applyProtocolDefaultsToMappings({ dryRun = false, changed = "wheel" } =
 // of the current rows are on a recognised code, say so plainly instead of
 // showing a confirm dialog with nothing to actually do.
 function promptApplyProtocolDefaults(changed) {
+  // A LIN 1.3 wheel (protocol 2) reports its own codes, not a known PQ/MQB
+  // button set, so there is nothing to translate them from.
+  if (wheelIsDecoded()) {
+    setStatus("LIN 1.3 wheel: use Learn on each row, then pick the code for the car.");
+    return;
+  }
   const candidateCount = applyProtocolDefaultsToMappings({ dryRun: true, changed });
   if (candidateCount === 0) {
     setStatus("No button rows are on a recognised PQ/MQB/MEB code, so there's nothing to update automatically.");
@@ -594,17 +626,26 @@ const TRIGGERS = [
 
 // Which frame byte a row matches on is otherwise invisible, which made a
 // mis-learned row (matching a constant byte, so permanently "pressed") very
-// hard to spot. Bytes 6 and 7 are the legitimate paddle/horn positions.
+// hard to spot. The button byte (Setup "Button data byte", 1 by default) and
+// bytes 6 and 7 (paddles / horn) are the legitimate positions. Learn stores
+// the byte it captured from, so an ordinary button learns as sourceByte 1
+// (captureLearned() in LIN.cpp), not 0 — that must not be flagged.
 function srcByteHint(row) {
   const sb = num(row.sourceByte);
-  if (!sb) return "Matches the default button byte";
-  return `Matches frame byte ${sb}` +
-    (srcByteSuspect(row) ? " — unusual; if this row is always active, re-learn or delete it" : "");
+  if (!sb || sb === defaultButtonByte()) return "Matches the button byte";
+  if (sb === 6) return "Matches frame byte 6 (paddles)";
+  if (sb === 7) return "Matches frame byte 7 (horn)";
+  if (!srcByteSuspect(row)) return `Matches frame byte ${sb}`;
+  return `Matches frame byte ${sb} — unusual; if this row is always active, re-learn or delete it`;
 }
 
 function srcByteSuspect(row) {
   const sb = num(row.sourceByte);
-  return sb !== 0 && sb !== 6 && sb !== 7;
+  if (sb === 0 || sb === defaultButtonByte() || sb === 6 || sb === 7) return false;
+  // A LIN 1.3 wheel's decoded frame also carries learnable bits in bytes 2
+  // and 5 (horn / other changed bits), so those are legitimate there.
+  if (wheelIsDecoded() && (sb === 2 || sb === 5)) return false;
+  return true;
 }
 
 function triggerOptions(flags) {
@@ -675,6 +716,8 @@ function wireControls() {
   document.getElementById("saveSetupBtn").addEventListener("click", saveSetup);
   document.getElementById("forgetRollersBtn").addEventListener("click", forgetRollerCodes);
   wireScrollWizard();
+  wireFitWizard();
+  wireLinScan();
   document.getElementById("learnAuxDimBtn").addEventListener("click", () => learnAuxLimit("dim"));
   document.getElementById("learnAuxBrightBtn").addEventListener("click", () => learnAuxLimit("bright"));
 
@@ -731,6 +774,15 @@ function wireControls() {
       promptApplyProtocolDefaults("wheel");
     });
   }
+  // Custom wheel profile: every field saves on change, like the rest of Setup.
+  ["cwBaud", "cwChecksum", "cwBtnId0", "cwBtnLen0", "cwBtnId1", "cwBtnLen1", "cwDecoder",
+   "cwCodeByte", "cwRollerByte", "cwLightId", "cwLightLen", "cwLightData", "cwLightBrightByte",
+   "cwLightBrightMax", "cwLightEveryMs"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", () => { updateCustomWheelUi(); saveSetup(); });
+  });
+  const cwFromScan = document.getElementById("cwFromScan");
+  if (cwFromScan) cwFromScan.addEventListener("click", fillCustomWheelFromScan);
   const mqbActPreset = document.getElementById("mqbActPreset");
   if (mqbActPreset) {
     mqbActPreset.addEventListener("change", () => {
@@ -951,6 +1003,107 @@ function updateWheelProtocolUi() {
   if (sel && row) row.style.display = sel.value === "1" ? "" : "none";
   syncActPresetToBytes();
   updateActByteVisibility();
+  updateCustomWheelUi();
+}
+
+// ---------- Custom wheel profile (Wheel Protocol 7) ----------
+// Mirrors CustomWheelConfig in globals.h. 0xFF = "none" for IDs / bytes; a
+// length of 0 = "work it out from the wheel's answer".
+const CW_NONE = 0xFF;
+
+function cwEl(id) { return document.getElementById(id); }
+
+// "" or a hex byte -> number, or CW_NONE when blank / invalid.
+function cwHexOrNone(id) {
+  const s = (cwEl(id) ? cwEl(id).value : "").trim();
+  if (s === "") return CW_NONE;
+  const n = parseInt(s, 16);
+  return Number.isFinite(n) && n >= 0 && n <= 0x3B ? n : CW_NONE;
+}
+function cwByteOrNone(id) {
+  const s = (cwEl(id) ? cwEl(id).value : "").trim();
+  if (s === "") return CW_NONE;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= 0 && n <= 7 ? n : CW_NONE;
+}
+
+function fillCustomWheelForm(c) {
+  if (!c || !cwEl("cwBaud")) return;
+  const ids = Array.isArray(c.btnId) ? c.btnId : [];
+  const lens = Array.isArray(c.btnLen) ? c.btnLen : [];
+  const hexOrBlank = (v) => (v == null || num(v) === CW_NONE ? "" : hex2(v));
+  const byteOrBlank = (v) => (v == null || num(v) === CW_NONE ? "" : String(num(v)));
+  cwEl("cwBaud").value = String(num(c.baud) || 19200);
+  cwEl("cwChecksum").value = String(c.checksum != null ? num(c.checksum) : 2);
+  cwEl("cwBtnId0").value = hexOrBlank(ids[0]);
+  cwEl("cwBtnLen0").value = String(num(lens[0]));
+  cwEl("cwBtnId1").value = hexOrBlank(ids[1]);
+  cwEl("cwBtnLen1").value = String(num(lens[1]));
+  cwEl("cwDecoder").value = String(num(c.decoder));
+  cwEl("cwCodeByte").value = String(c.codeByte != null ? num(c.codeByte) : 1);
+  cwEl("cwRollerByte").value = byteOrBlank(c.rollerByte);
+  cwEl("cwLightId").value = hexOrBlank(c.lightId);
+  cwEl("cwLightLen").value = String(num(c.lightLen) || 4);
+  cwEl("cwLightData").value = String(c.lightData || "").trim();
+  cwEl("cwLightBrightByte").value = byteOrBlank(c.lightBrightByte);
+  cwEl("cwLightBrightMax").value = hex2(c.lightBrightMax != null ? num(c.lightBrightMax) : 0x7F);
+  cwEl("cwLightEveryMs").value = String(num(c.lightEveryMs) || 100);
+  updateCustomWheelUi();
+}
+
+// The form as the firmware's customWheel object (it clamps anything odd too).
+function readCustomWheelForm() {
+  if (!cwEl("cwBaud")) return undefined;
+  const len = (id) => clamp(num(cwEl(id).value), 0, 8);
+  return {
+    baud: num(cwEl("cwBaud").value) || 19200,
+    checksum: num(cwEl("cwChecksum").value),
+    decoder: num(cwEl("cwDecoder").value),
+    codeByte: clamp(num(cwEl("cwCodeByte").value), 0, 7),
+    rollerByte: cwByteOrNone("cwRollerByte"),
+    btnId: [cwHexOrNone("cwBtnId0"), cwHexOrNone("cwBtnId1")],
+    btnLen: [len("cwBtnLen0"), len("cwBtnLen1")],
+    lightId: cwHexOrNone("cwLightId"),
+    lightLen: clamp(num(cwEl("cwLightLen").value) || 4, 1, 8),
+    lightData: cwEl("cwLightData").value.trim(),
+    lightBrightByte: cwByteOrNone("cwLightBrightByte"),
+    lightBrightMax: parseHexByte("cwLightBrightMax", 0x7F),
+    lightEveryMs: clamp(num(cwEl("cwLightEveryMs").value) || 100, 100, 2000),
+  };
+}
+
+function updateCustomWheelUi() {
+  const fields = cwEl("cwFields");
+  if (!fields) return;
+  const active = document.getElementById("wheelProtocol").value === "7";
+  fields.hidden = !active;
+  const hint = cwEl("cwInactiveHint");
+  if (hint) hint.hidden = active;
+  const codeByte = cwEl("cwDecoder").value === "0";
+  cwEl("cwCodeByteRow").hidden = !codeByte;
+  cwEl("cwRollerByteRow").hidden = !codeByte;
+}
+
+// Take the first wheel frame(s) from the last LIN1 scan: ID, length,
+// checksum, speed. The rest (decoder, light frame) stays as set.
+function fillCustomWheelFromScan() {
+  const hits = linScan && Array.isArray(linScan.hits) ? linScan.hits : [];
+  if (!hits.length) {
+    setStatus("No scan result yet — run Diagnostics > LIN Monitor > Scan LIN1 with the wheel connected.");
+    return;
+  }
+  const a = hits[0];
+  const b = hits[1];
+  cwEl("cwBaud").value = String(num(a.baud) || 19200);
+  cwEl("cwChecksum").value = a.classic ? "1" : "0";
+  cwEl("cwBtnId0").value = hex2(a.id);
+  cwEl("cwBtnLen0").value = String(num(a.len));
+  cwEl("cwBtnId1").value = b && num(b.baud) === num(a.baud) ? hex2(b.id) : "";
+  cwEl("cwBtnLen1").value = b && num(b.baud) === num(a.baud) ? String(num(b.len)) : "0";
+  updateCustomWheelUi();
+  saveSetup();
+  setStatus(`Custom wheel set from the scan: frame ${hexCode(a.id)}${b ? ` and ${hexCode(b.id)}` : ""}. ` +
+    "Pick how the buttons are coded, then Learn them in the button table.");
 }
 
 // Pick the preset dropdown value that matches the current activation bytes.
@@ -1081,6 +1234,7 @@ async function loadSetup() {
     document.getElementById("linButtonByteIndex").value = (setup.linButtonByteIndex != null ? setup.linButtonByteIndex : 1);
     document.getElementById("linRotaryByteIndex").value = (setup.linRotaryByteIndex != null ? setup.linRotaryByteIndex : 3);
     document.getElementById("wheelProtocol").value = String(setup.wheelProtocol != null ? setup.wheelProtocol : 0);
+    if (setup.customWheel) fillCustomWheelForm(setup.customWheel);
     document.getElementById("mqbActByte1").value = hex2(setup.mqbActByte1 != null ? setup.mqbActByte1 : 0xFF);
     document.getElementById("mqbActByte2").value = hex2(setup.mqbActByte2 != null ? setup.mqbActByte2 : 0x00);
     document.getElementById("mqbActByte3").value = hex2(setup.mqbActByte3 != null ? setup.mqbActByte3 : 0x00);
@@ -1098,6 +1252,8 @@ async function loadSetup() {
     setRollerCodes(setup.rollerCodes);
     setMappingsDirty(false);
     renderMappings();
+    setupLoaded = true;
+    fitOnSetupLoaded();
   } catch (err) {
     setStatus(`Setup load failed: ${err.message}`);
   }
@@ -1270,10 +1426,20 @@ async function loadStatus() {
       }
     }
 
-    updateWizardFromStatus(s);
+    updateWizardFromStatus(s);  // first: it keeps lastProbeSeq current
     updateLearnBannerFromStatus(s);
+    // Kept apart so a UI bug in one of these can't pass for the device
+    // dropping off (the catch below), which the fit wizard reads as a reboot.
+    try {
+      updateLinScanFromStatus(s);
+      updateLiveRow(s);
+      updateFitFromStatus(s);
+    } catch (e) {
+      console.error(e);
+    }
   } catch (err) {
     updateLearnBannerFromStatus(null);
+    fitNoteOffline();
   }
 }
 
@@ -1287,7 +1453,9 @@ function updateLearnBannerFromStatus(status) {
 
   if (status && status.learnActive && status.learnTarget === LEARN_PROBE) {
     el.classList.add("active");
-    el.textContent = "Scroll wheel setup is listening for the wheel.";
+    el.textContent = fit ? "Fit a new wheel is listening for the wheel."
+      : "Scroll wheel setup is listening for the wheel.";
+    markLearnButtons(-1, 0, 0);
     return;
   }
 
@@ -1298,6 +1466,7 @@ function updateLearnBannerFromStatus(status) {
 
     el.classList.add("active");
     el.textContent = `Learn active for row ${rowText} (${targetText}) - ${sec}s remaining`;
+    markLearnButtons(Number(status.learnRowIndex || 0), status.learnTarget || 0, sec);
     return;
   }
 
@@ -1307,21 +1476,35 @@ function updateLearnBannerFromStatus(status) {
     const targetText = learnTargetText(localLearnTarget);
     el.classList.add("active");
     el.textContent = `Learn active for row ${rowText} (${targetText}) - ${sec}s remaining`;
+    markLearnButtons(localLearnRow, localLearnTarget, sec);
     return;
   }
 
   el.classList.remove("active");
   el.textContent = "Learn mode idle.";
+  markLearnButtons(-1, 0, 0);
+}
+
+// The banner sits at the top of a long table, off screen on a phone, so the
+// armed Learn button itself counts down too.
+function markLearnButtons(row, target, sec) {
+  const kind = target === 1 ? "old" : target === 2 ? "lin" : "";
+  document.querySelectorAll("#mappingRows button[data-learn]").forEach((btn) => {
+    const on = kind && btn.dataset.learn === kind && Number(btn.dataset.idx) === row;
+    btn.classList.toggle("armed", !!on);
+    const text = on ? `${sec}s` : "Learn";
+    if (btn.textContent !== text) btn.textContent = text;
+  });
 }
 
 function learnTargetText(target) {
   if (target === 1) {
     // Scrolling down is what proves a code is a roller (a button never reports
     // a negative step), so that is the way to learn one.
-    return "Button ID_LIN (original) — press it; for a scroll wheel, scroll it DOWN one click";
+    return "From wheel — press it; for a scroll wheel, scroll it DOWN one click";
   }
   if (target === 2) {
-    return "Button ID_LIN (new)";
+    return "To car — press the button on the wheel the car already understands";
   }
   if (target === 3) {
     return "Button ID_CAN (new)";
@@ -1366,30 +1549,56 @@ function renderMappings() {
         ? `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Learn up, down and press, then replace this row with one row each">Split &#9650;&#9660;</button>`
         : `<button class="btn tiny secondary" data-roller-fix="${idx}" title="Learn the Scroll ${dirWord(fix.dir)} (and press) for this wheel and add their rows">+ ${fix.dir === FLAG_ROTARY_UP ? "&#9650;" : "&#9660;"} row</button>`;
 
+    // Phone layout: Name / From wheel / To car stay visible, everything else
+    // folds away behind the Outputs toggle (CSS does the folding; on a wide
+    // screen the toggle column is hidden and every column shows).
+    const open = openRows.has(idx);
+    if (open) tr.classList.add("open");
+    const hexAttrs = 'type="text" inputmode="text" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false"';
+
     tr.innerHTML = `
-      <td><input data-field="name" data-idx="${idx}" type="text" value="${escapeAttr(row.name || "")}"></td>
-      <td><input data-field="oldButtonId" data-idx="${idx}" type="number" min="0" max="255" value="${num(row.oldButtonId)}" title="${srcByteHint(row)}"${srcByteSuspect(row) ? ' class="warn-cell"' : ""}></td>
-      <td><button class="btn tiny secondary" data-learn="old" data-idx="${idx}">Learn</button></td>
-      <td><input data-field="newLinButtonId" data-idx="${idx}" type="number" min="0" max="255" value="${num(row.newLinButtonId)}"${exDis}></td>
-      <td><button class="btn tiny secondary" data-learn="lin" data-idx="${idx}"${exDis}>Learn</button></td>
-      <td><select data-field="canByteIndex" data-idx="${idx}" title="Which byte of the CAN frame this button sets a bit in. &#8212; means NO CAN output for this row (the default for new rows)."${exDis}>${byteOptions}</select></td>
-      <td><input data-field="canBitIndex" data-idx="${idx}" type="number" min="0" max="7" value="${bitIdx}"${exDis}></td>
-      <td><input data-field="resistiveOhm" data-idx="${idx}" type="number" min="0" max="20000" value="${num(row.resistiveOhm)}"${exDis}></td>
-      <td style="text-align:center"><input data-field="flags" data-subfield="pnp" data-idx="${idx}" type="checkbox" title="Activate MOSFET output when pressed" ${(num(row.flags) & 1) ? "checked" : ""}${exDis}></td>
-      <td style="text-align:center"><input data-field="flags" data-subfield="latch" data-idx="${idx}" type="checkbox" title="Latch: press to activate, press again to clear (MOSFET, CAN and LIN)" ${(num(row.flags) & 2) ? "checked" : ""}${exDis}></td>
-      <td style="text-align:center"><input data-field="flags" data-subfield="openhaldex" data-idx="${idx}" type="checkbox" title="OpenHaldex control (exclusive: overrides MOSFET/CAN/LIN for this button)" ${ohEnabled ? "checked" : ""}${chaEnabled ? " disabled" : ""}></td>
-      <td><select data-field="openHaldexMode" data-idx="${idx}" title="OpenHaldex mode to set on press"${ohEnabled ? "" : " disabled"}>${ohModeOptions(ohMode)}</select></td>
-      <td style="text-align:center"><input data-field="flags" data-subfield="charisma" data-idx="${idx}" type="checkbox" title="Charisma / Drive Select: press advances the program (exclusive: overrides MOSFET/CAN/LIN for this button). Set the output mode in Settings." ${chaEnabled ? "checked" : ""}${ohEnabled ? " disabled" : ""}></td>
-      <td><select data-field="trigger" data-idx="${idx}" title="${trigTitle}"${trigWarn}${exDis}>${triggerOptions(num(row.flags))}</select>${fixBtn}</td>
-      <td><button class="btn tiny danger" data-delete="row" data-idx="${idx}">Delete</button></td>
+      <td class="c-name"><input data-field="name" data-idx="${idx}" type="text" maxlength="17" value="${escapeAttr(row.name || "")}" aria-label="Name"></td>
+      <td class="c-more"><button class="btn tiny secondary row-more" data-more="${idx}" type="button" aria-expanded="${open}"><span class="row-more-sum">${escapeAttr(outputsSummary(row))}</span><span class="row-more-arrow">${open ? "&#9652;" : "&#9662;"}</span></button></td>
+      <td class="c-from" data-label="From wheel"><div class="code-cell"><span class="code-pre">0x</span><input class="hex-input${srcByteSuspect(row) ? " warn-cell" : ""}" data-field="oldButtonId" data-idx="${idx}" ${hexAttrs} value="${hex2(num(row.oldButtonId))}" title="Code the fitted wheel sends. ${srcByteHint(row)}" aria-label="From wheel code (hex)"><button class="btn tiny secondary" data-learn="old" data-idx="${idx}" type="button" title="Learn: press this, then the button on the wheel fitted now">Learn</button></div></td>
+      <td class="c-to" data-label="To car"><div class="code-cell"><span class="code-pre">0x</span><input class="hex-input" data-field="newLinButtonId" data-idx="${idx}" ${hexAttrs} value="${hex2(num(row.newLinButtonId))}" title="Code passed on to the car (chassis LIN output)" aria-label="To car code (hex)"${exDis}><button class="btn tiny secondary" data-learn="lin" data-idx="${idx}" type="button" title="Learn: press this, then the button on a wheel the car already understands"${exDis}>Learn</button></div></td>
+      <td class="c-out" data-label="CAN byte"><select data-field="canByteIndex" data-idx="${idx}" title="Which byte of the CAN frame this button sets a bit in. &#8212; means NO CAN output for this row (the default for new rows)."${exDis}>${byteOptions}</select></td>
+      <td class="c-out" data-label="CAN bit"><input data-field="canBitIndex" data-idx="${idx}" type="number" min="0" max="7" value="${bitIdx}"${exDis}></td>
+      <td class="c-out" data-label="Resistive (&Omega;)"><input data-field="resistiveOhm" data-idx="${idx}" type="number" min="0" max="20000" value="${num(row.resistiveOhm)}"${exDis}></td>
+      <td class="c-out c-chk" data-label="MOSFET"><input data-field="flags" data-subfield="pnp" data-idx="${idx}" type="checkbox" title="Activate MOSFET output when pressed" ${(num(row.flags) & 1) ? "checked" : ""}${exDis}></td>
+      <td class="c-out c-chk" data-label="Latch"><input data-field="flags" data-subfield="latch" data-idx="${idx}" type="checkbox" title="Latch: press to activate, press again to clear (MOSFET, CAN and LIN)" ${(num(row.flags) & 2) ? "checked" : ""}${exDis}></td>
+      <td class="c-out c-chk" data-label="OpenHaldex"><input data-field="flags" data-subfield="openhaldex" data-idx="${idx}" type="checkbox" title="OpenHaldex control (exclusive: overrides MOSFET/CAN/LIN for this button)" ${ohEnabled ? "checked" : ""}${chaEnabled ? " disabled" : ""}></td>
+      <td class="c-out" data-label="OH mode"><select data-field="openHaldexMode" data-idx="${idx}" title="OpenHaldex mode to set on press"${ohEnabled ? "" : " disabled"}>${ohModeOptions(ohMode)}</select></td>
+      <td class="c-out c-chk" data-label="Charisma"><input data-field="flags" data-subfield="charisma" data-idx="${idx}" type="checkbox" title="Charisma / Drive Select: press advances the program (exclusive: overrides MOSFET/CAN/LIN for this button). Set the output mode in Settings." ${chaEnabled ? "checked" : ""}${ohEnabled ? " disabled" : ""}></td>
+      <td class="c-out c-trig" data-label="Trigger"><div class="trig-cell"><select data-field="trigger" data-idx="${idx}" title="${trigTitle}"${trigWarn}${exDis}>${triggerOptions(num(row.flags))}</select>${fixBtn}</div></td>
+      <td class="c-out c-del"><button class="btn tiny danger" data-delete="row" data-idx="${idx}" type="button">Delete</button></td>
     `;
 
     tbody.appendChild(tr);
   });
 
   tbody.querySelectorAll("input, select").forEach((el) => {
-    el.addEventListener("change", onEditRow);
+    el.addEventListener("change", (e) => {
+      const i = Number(e.target.dataset.idx);
+      onEditRow(e);
+      refreshRowSummary(i);
+    });
   });
+
+  tbody.querySelectorAll("button[data-more]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.more);
+      const tr = btn.closest("tr");
+      const nowOpen = !openRows.has(i);
+      if (nowOpen) openRows.add(i); else openRows.delete(i);
+      tr.classList.toggle("open", nowOpen);
+      btn.setAttribute("aria-expanded", String(nowOpen));
+      btn.querySelector(".row-more-arrow").innerHTML = nowOpen ? "&#9652;" : "&#9662;";
+    });
+  });
+  if (liveRowIdx >= 0) {
+    const tr = tbody.querySelector(`tr[data-idx="${liveRowIdx}"]`);
+    if (tr) tr.classList.add("live");
+  }
 
   tbody.querySelectorAll("button[data-learn]").forEach((btn) => {
     btn.addEventListener("click", onLearnClick);
@@ -1404,9 +1613,47 @@ function renderMappings() {
   });
 }
 
+// Rows whose outputs are unfolded in the phone layout, by index.
+const openRows = new Set();
+
+// One line saying what a row does, shown on its folded Outputs toggle.
+function outputsSummary(row) {
+  const f = num(row.flags);
+  if (f & 4) return "OpenHaldex";
+  if (f & 8) return "Charisma";
+  const parts = [];
+  if (typeof row.canByteIndex === "number" && row.canByteIndex < 8) {
+    parts.push(`CAN ${row.canByteIndex}.${clamp(num(row.canBitIndex), 0, 7)}`);
+  }
+  if (num(row.resistiveOhm)) parts.push(`${num(row.resistiveOhm)} Ω`);
+  if (f & 1) parts.push("MOSFET");
+  if (f & 2) parts.push("Latch");
+  const trig = TRIGGERS.find((t) => t[2] && (f & TRIGGER_MASK) === t[2]);
+  if (trig) parts.push(trig[1]);
+  return parts.length ? parts.join(" · ") : "Outputs";
+}
+
+function refreshRowSummary(idx) {
+  const row = mappings[idx];
+  const el = document.querySelector(`#mappingRows tr[data-idx="${idx}"] .row-more-sum`);
+  if (row && el) el.textContent = outputsSummary(row);
+}
+
+// "0E", "0x0E", "e" -> 14; "" -> 0; anything else -> null.
+function parseHexCode(text) {
+  const s = String(text).trim().replace(/^0x/i, "");
+  if (s === "") return 0;
+  if (!/^[0-9a-f]{1,2}$/i.test(s)) return null;
+  return parseInt(s, 16);
+}
+
 function onDeleteRowClick(event) {
   const idx = Number(event.target.dataset.idx);
   mappings.splice(idx, 1);
+  // Unfolded rows are tracked by index, which just shifted.
+  const shifted = [...openRows].filter((i) => i !== idx).map((i) => (i > idx ? i - 1 : i));
+  openRows.clear();
+  shifted.forEach((i) => openRows.add(i));
   renderMappings();
   setMappingsDirty(true);
 }
@@ -1414,6 +1661,25 @@ function onDeleteRowClick(event) {
 function onEditRow(event) {
   const idx = Number(event.target.dataset.idx);
   const field = event.target.dataset.field;
+
+  if (field === "oldButtonId" || field === "newLinButtonId") {
+    // Codes are shown and typed in hex, like the README and the LIN Monitor.
+    const v = parseHexCode(event.target.value);
+    if (v === null) {
+      setStatus(`"${event.target.value}" isn't a code — type it in hex, 00 to FF (e.g. 0E).`);
+      renderMappings();  // put the old value back
+      return;
+    }
+    setMappingsDirty(true);
+    mappings[idx][field] = v;
+    // Typing a From wheel code by hand means "match this on the normal button
+    // byte" — otherwise a sourceByte left behind by a bad Learn keeps the row
+    // pointed at the wrong byte, with nothing on screen explaining why.
+    if (field === "oldButtonId") mappings[idx].sourceByte = 0;
+    renderMappings();
+    return;
+  }
+
   setMappingsDirty(true);
 
   if (field === "flags" && event.target.dataset.subfield === "pnp") {
@@ -1436,15 +1702,6 @@ function onEditRow(event) {
     const current = num(mappings[idx].flags);
     mappings[idx].flags = event.target.checked ? (current | 8) : (current & ~8);
     renderMappings();  // redraw to apply/remove exclusive-mode disabling
-    return;
-  }
-  if (field === "oldButtonId") {
-    // Typing a code by hand means "match this on the normal button byte" —
-    // otherwise a sourceByte left behind by a bad Learn keeps the row pointed
-    // at the wrong byte, with nothing on screen explaining why.
-    mappings[idx].oldButtonId = num(event.target.value);
-    mappings[idx].sourceByte = 0;
-    renderMappings();
     return;
   }
   if (field === "trigger") {
@@ -1532,7 +1789,10 @@ async function saveSetup() {
     // direction from it gives a random sign.
     linRotaryByteIndex: (document.getElementById("linRotaryByteIndex").value.trim() === "")
       ? 3 : clamp(num(document.getElementById("linRotaryByteIndex").value), 0, 8),
-    wheelProtocol: Number(document.getElementById("wheelProtocol").value) === 1 ? 1 : 0,
+    // 0 PQ, 1 MQB, 2 VAG LIN 1.3; anything else falls back to PQ (as the firmware does).
+    wheelProtocol: [0, 1, 2, 3, 4, 5, 6, 7].includes(Number(document.getElementById("wheelProtocol").value))
+      ? Number(document.getElementById("wheelProtocol").value) : 0,
+    customWheel: readCustomWheelForm(),
     mqbActByte1: parseHexByte("mqbActByte1", 0xFF),
     mqbActByte2: parseHexByte("mqbActByte2", 0x00),
     mqbActByte3: parseHexByte("mqbActByte3", 0x00),
@@ -1571,7 +1831,7 @@ async function saveSetup() {
       // in rather than overwrite it, and let the user save again.
       await mergeLearnedCodes();
       setStatus("A learned code arrived just now — check the table and press Save Setup again.");
-      return;
+      return false;
     }
     if (!res.ok) {
       throw new Error("Save failed");
@@ -1580,13 +1840,15 @@ async function saveSetup() {
     const body = await res.json().catch(() => ({}));
     if (body && body.reboot) {
       setStatus(body.message || "LIN pin mapping changed. Device rebooting\u2026");
-      return;
+      return true;
     }
 
     setMappingsDirty(false);
     setStatus("Setup saved.");
+    return true;
   } catch (err) {
     setStatus(`Save error: ${err.message}`);
+    return false;
   }
 }
 
@@ -1680,11 +1942,13 @@ function setStatusValue(id, text, active) {
   el.classList.toggle("muted", !active);
 }
 
+// Messages land in every .app-status line (Setup's Wheel & car card and the
+// Buttons tab). They used to go to #otaStatus, on the OTA tab, where nobody
+// working on the Buttons tab could see them.
 function setStatus(text) {
-  const el = document.getElementById("otaStatus");
-  if (el) {
+  document.querySelectorAll(".app-status").forEach((el) => {
     el.textContent = text;
-  }
+  });
 }
 
 function num(v) {
@@ -1783,5 +2047,1117 @@ async function pollCanLog() {
     if (auto && auto.checked) view.scrollTop = view.scrollHeight;
     canLogSince = r.writeIndex;
   } catch (e) {}
+}
+
+// Only touch the DOM when the markup really changed: these are refreshed on
+// every 200 ms status poll, and replacing a button under a finger as it is
+// pressed swallows the tap.
+function setHtml(el, html) {
+  if (el && el._html !== html) {
+    el._html = html;
+    el.innerHTML = html;
+  }
+}
+
+// ---------- LIN1 scan / wheel detect ----------
+// GET /api/status "linScan" (runLinScan() in LIN.cpp): seq +1 per completed
+// scan, suggest = the wheel protocol the answers match (0 PQ / 1 MQB / 2 VAG
+// LIN 1.3 / 3 Up! / 4 Volvo P1 / 5 Volvo P3), 253 something unknown answered, 254 nothing answered, 255 none
+// run yet. Firmware before V1.10 has no linScan field: all of this then stays
+// hidden. linScan.ms is the device's millis() when it finished; with
+// uptimeMs (V1.11) that gives the scan's age.
+const WHEEL_PROTOCOL_NAMES = { 0: "PQ", 1: "MQB", 2: "VAG LIN 1.3", 3: "VW Up! / Citigo / Mii", 4: "Volvo P1", 5: "Volvo P3", 6: "BMW K-bus", 7: "Custom" };
+const SCAN_UNKNOWN = 253;
+const SCAN_NOTHING = 254;
+const HINT_UNKNOWN = "Unknown wheel — export the LIN Monitor log (Diagnostics) and send it to Forbes Automotive.";
+const HINT_NOTHING = "Nothing answered on LIN1 — check the wheel's power and ground, the LIN wire, and Setup > Advanced > Legacy PCB.";
+
+let linScan = null;           // last linScan from /api/status
+let linScanAgeS = null;       // seconds since that scan finished (null: firmware doesn't say)
+let lin1Healthy = false;
+let linScanPending = null;    // { seq, at } while a scan we asked for is running
+let linScanError = "";
+let linScanAsked = false;     // the Diagnostics Scan LIN1 button has been used
+let detectDismissed = "";     // key of the banner the user closed
+try { detectDismissed = sessionStorage.getItem("mfswDetectDismissed") || ""; } catch (e) {}
+
+function scanSuggestText(sug) {
+  if (sug === 0) return "a PQ wheel (frame 0x0E)";
+  if (sug === 1) return "an MQB wheel (frame 0x0E)";
+  if (sug === 2) return "a VAG LIN 1.3 wheel (frame 0x30)";
+  if (sug === 3) return "a VW Up! / Citigo / Mii wheel (frames 0x0E + 0x0C)";
+  if (sug === 4) return "a Volvo P1 wheel (frame 0x20 at 9600)";
+  if (sug === 5) return "a Volvo P3 wheel (frames 0x30 / 0x20 at 9600)";
+  if (sug === SCAN_UNKNOWN) return "an unknown wheel";
+  if (sug === SCAN_NOTHING) return "nothing — no ID answered";
+  return "nothing yet (no scan has run)";
+}
+
+function selectedWheelProtocol() {
+  return Number(document.getElementById("wheelProtocol").value);
+}
+
+async function requestLinScan() {
+  linScanError = "";
+  linScanPending = { seq: linScan ? linScan.seq : null, at: Date.now() };
+  renderLinScanResult();
+  try {
+    const res = await fetch("/api/lin/scan", { method: "POST" });
+    if (!res.ok) throw new Error(res.status === 404 ? "this firmware can't scan LIN1 — update it (OTA tab)" : `HTTP ${res.status}`);
+    return true;
+  } catch (err) {
+    linScanPending = null;
+    linScanError = `Scan failed: ${err.message}`;
+    renderLinScanResult();
+    renderFitLive();
+    return false;
+  }
+}
+
+function updateLinScanFromStatus(s) {
+  lin1Healthy = !!s.lin1Healthy;
+  const prevSeq = linScan ? linScan.seq : null;
+  linScan = (s.linScan && typeof s.linScan.seq === "number") ? s.linScan : null;
+  linScanAgeS = (linScan && typeof s.uptimeMs === "number" && s.uptimeMs >= num(linScan.ms))
+    ? Math.round((s.uptimeMs - num(linScan.ms)) / 1000) : null;
+  // Also redraw while the result shows an age, so "(N s ago)" keeps counting.
+  let redraw = !linScan || linScan.seq !== prevSeq || linScanAgeS != null;
+  if (linScanPending) {
+    if (linScan && linScan.seq !== linScanPending.seq) {
+      linScanPending = null;
+      redraw = true;
+    } else if (Date.now() - linScanPending.at > 6000) {
+      linScanPending = null;
+      linScanError = linScan ? "The scan didn't finish — try again." : "This firmware doesn't report LIN1 scans — update it (OTA tab).";
+      redraw = true;
+    }
+  }
+  if (redraw) renderLinScanResult();
+  renderDetectBanners();
+}
+
+// Diagnostics > LIN Monitor: the hits of the last scan, manual or automatic.
+function renderLinScanResult() {
+  const el = document.getElementById("linScanResult");
+  if (!el) return;
+  const btn = document.getElementById("linScanBtn");
+  if (btn) {
+    btn.disabled = !!linScanPending;
+    btn.textContent = linScanPending ? "Scanning…" : "Scan LIN1";
+  }
+  if (linScanPending) {
+    el.hidden = false;
+    setHtml(el, `<div class="scan-head">Scanning LIN1 (1–3 s)…</div>`);
+    return;
+  }
+  if (linScanError) {
+    el.hidden = false;
+    setHtml(el, `<div class="scan-head warn">${escapeAttr(linScanError)}</div>`);
+    return;
+  }
+  if (!linScan || !linScan.seq) {
+    el.hidden = !linScanAsked;
+    setHtml(el, `<div class="scan-head">No scan has run yet.</div>`);
+    return;
+  }
+  const sug = num(linScan.suggest);
+  const hits = Array.isArray(linScan.hits) ? linScan.hits : [];
+  const wp = selectedWheelProtocol();
+  const age = linScanAgeS == null ? "" : linScanAgeS < 60 ? ` (${linScanAgeS} s ago)` : ` (${Math.round(linScanAgeS / 60)} min ago)`;
+  let head = `Last scan${age}: ${hits.length} ID${hits.length === 1 ? "" : "s"} answered — looks like ${scanSuggestText(sug)}.`;
+  if (sug <= 7 && sug !== wp) head += ` Wheel Protocol is set to ${WHEEL_PROTOCOL_NAMES[wp] || wp}.`;
+  if (sug === SCAN_UNKNOWN) head += ` ${HINT_UNKNOWN}`;
+  if (sug === SCAN_NOTHING) head += ` ${HINT_NOTHING}`;
+  const rows = hits.map((h) =>
+    `<div class="scan-hit"><span class="scan-id">${hexCode(h.id)}</span>` +
+    `<span class="scan-meta">${num(h.len)} byte${num(h.len) === 1 ? "" : "s"}, ${h.classic ? "classic (LIN 1.x)" : "enhanced (LIN 2.x)"}${h.baud ? `, ${num(h.baud)} baud` : ""}</span>` +
+    `<code>${escapeAttr(h.data || "")}</code></div>`).join("");
+  el.hidden = false;
+  setHtml(el, `<div class="scan-head">${escapeAttr(head)}</div>${rows}`);
+}
+
+// What the Dashboard / Setup banner should say, or null.
+function detectProblem() {
+  // Until /api/setup has loaded, the Wheel Protocol select shows its HTML
+  // default rather than the device's setting.
+  if (!setupLoaded || !linScan || !linScan.seq) return null;
+  const sug = num(linScan.suggest);
+  const wp = selectedWheelProtocol();
+  const key = `${linScan.seq}|${sug}|${wp}`;
+  if (sug <= 7) {
+    if (sug === wp) return null;
+    // A wheel answering under the selected protocol makes an older 0x30-vs-0x0E
+    // result stale (the two never answer each other's frame). PQ and MQB both
+    // answer 0x0E, so that mismatch counts even while the wheel is talking.
+    // Custom (7) may well be set up for exactly this wheel: trust it while it answers.
+    if (lin1Healthy && !(VW_0E_WHEELS.includes(sug) && VW_0E_WHEELS.includes(wp))) return null;
+    return {
+      key, sug, switchable: true,
+      text: `The wheel on LIN1 looks like ${scanSuggestText(sug)}, but Wheel Protocol is set to ${WHEEL_PROTOCOL_NAMES[wp] || wp}.`,
+    };
+  }
+  if (lin1Healthy) return null;  // the scan is older than the wheel that now answers
+  if (sug === SCAN_UNKNOWN) return { key, text: HINT_UNKNOWN };
+  if (sug === SCAN_NOTHING) return { key, text: HINT_NOTHING };
+  return null;
+}
+
+function renderDetectBanners() {
+  const p = detectProblem();
+  const show = p && p.key !== detectDismissed;
+  const html = !show ? "" :
+    `<span class="detect-text">${escapeAttr(p.text)}</span>` +
+    `<span class="detect-actions">` +
+    (p.switchable ? `<button class="btn tiny primary" type="button" data-detect-switch="${p.sug}">Switch Wheel Protocol to ${WHEEL_PROTOCOL_NAMES[p.sug]}</button>` : "") +
+    `<button class="btn tiny secondary" type="button" data-detect-dismiss="${escapeAttr(p.key)}">Dismiss</button></span>`;
+  document.querySelectorAll("[data-detect-banner]").forEach((el) => {
+    el.hidden = !show;
+    setHtml(el, html);
+  });
+}
+
+// Set Wheel Protocol as if picked in Setup. promptCodes: also offer to update
+// known PQ/MQB button codes (Setup's own behaviour); the fit wizard says no,
+// as it learns every code itself.
+function setWheelProtocol(v, promptCodes) {
+  const sel = document.getElementById("wheelProtocol");
+  if (!sel || sel.value === String(v)) return;
+  sel.value = String(v);
+  updateWheelProtocolUi();
+  saveSetup();
+  if (Number(v) === 1) {
+    setStatus("Wheel Protocol set to MQB. If its buttons don't report, try the other Activation preset.");
+  }
+  if (promptCodes) promptApplyProtocolDefaults("wheel");
+  renderDetectBanners();
+  renderLinScanResult();
+}
+
+function wireLinScan() {
+  const btn = document.getElementById("linScanBtn");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      linScanAsked = true;
+      requestLinScan();
+    });
+  }
+  document.addEventListener("click", (e) => {
+    const sw = e.target.closest("[data-detect-switch]");
+    if (sw) {
+      setWheelProtocol(Number(sw.dataset.detectSwitch), true);
+      return;
+    }
+    const dis = e.target.closest("[data-detect-dismiss]");
+    if (dis) {
+      detectDismissed = dis.dataset.detectDismiss;
+      try { sessionStorage.setItem("mfswDetectDismissed", detectDismissed); } catch (err) {}
+      renderDetectBanners();
+    }
+  });
+}
+
+// ---------- Live row highlight ----------
+// The row the firmware matched lights up in the table (and in the fit
+// wizard's test list) while its button is held.
+let liveRowIdx = -1;
+let lastPressText = "";
+
+function updateLiveRow(s) {
+  let idx = -1;
+  const name = s.pressedButtonName;
+  if (name) {
+    const code = num(s.buttonIncoming);
+    // V1.11 firmware reports the exact row it matched; older firmware only the
+    // name + code, which is ambiguous when names repeat.
+    if (typeof s.matchedRow === "number" && s.matchedRow >= 0 && s.matchedRow < mappings.length) {
+      idx = s.matchedRow;
+    } else {
+      idx = mappings.findIndex((m) => m.name === name && num(m.oldButtonId) === code);
+      if (idx < 0) idx = mappings.findIndex((m) => m.name === name);
+    }
+    lastPressText = `${name} (${hexCode(code)})`;
+  } else if (num(s.buttonIncoming)) {
+    lastPressText = `${hexCode(s.buttonIncoming)} — no row uses this code`;
+  }
+  if (idx === liveRowIdx) return;
+  liveRowIdx = idx;
+  document.querySelectorAll("#mappingRows tr[data-idx]").forEach((tr) => {
+    tr.classList.toggle("live", Number(tr.dataset.idx) === idx);
+  });
+}
+
+// ---------- Fit a new wheel ----------
+// Four steps over the existing Learn API, using probe Learns (target 4: the
+// firmware reports what it heard and writes no row), so the table is only
+// changed here, row by row, and nothing depends on row indices while a step
+// runs:
+//   1. Current wheel: each row's "To car" (newLinButtonId) = what the wheel
+//      fitted now sends, i.e. what the car understands. Saved at the end of
+//      the step, because step 2 powers the controller off.
+//   2. Swap: ignition off, fit the new wheel, ignition on; pick its protocol
+//      and see it answer (LIN1 scan where the firmware has one).
+//   3. New wheel: each row's "From wheel" (oldButtonId + sourceByte) = the new
+//      button chosen for it. Rollers go through the scroll-wheel wizard.
+//   4. Test and save: saved, then each press lights its row.
+// Progress from step 2 on is kept in localStorage, so a page reopened after
+// the ignition cycle carries on.
+
+const FIT_KEY = "mfswFitWheel";
+const FIT_STEP_NAMES = ["Current wheel", "Swap wheel", "New wheel", "Test & save"];
+let fit = null;          // running wizard, null when idle
+let fitResume = null;    // saved progress offered on the idle screen
+let fitResumeChecked = false;
+
+function newFit(step) {
+  return {
+    step,
+    queue: [], pos: 0,
+    armed: false, arming: false, until: 0, baseSeq: null, retryAt: 0,
+    waitIdle: false, idleCount: 0, waitSince: 0, rest: null,
+    note: "", last: "",
+    got: new Map(), skipped: new Set(), none: new Set(),
+    carByte: new Map(),           // row -> byte the car's code came from (step 1)
+    snapshot: null, savedInStep3: false,
+    pendingDup: null, scrollRowFlags: 0,
+    saving: false, saveFailed: false,
+    swapPhase: "fit", offline: false, step2Since: 0,
+    scanAsked: false, scanSeqAtAsk: null,
+    forgetRollers: true, extraOpen: false,
+  };
+}
+
+function cloneRows(rows) {
+  return rows.map((r) => ({ ...r }));
+}
+
+function fitStore() {
+  try {
+    if (!fit || fit.step < 2) return;
+    const carBytes = {};
+    fit.carByte.forEach((b, row) => {
+      const i = mappings.indexOf(row);
+      if (i >= 0) carBytes[i] = b;
+    });
+    localStorage.setItem(FIT_KEY, JSON.stringify({
+      step: fit.step, swapPhase: fit.swapPhase, at: Date.now(),
+      names: mappings.map((m) => m.name), carBytes,
+    }));
+  } catch (e) {}
+}
+
+function fitStoreClear() {
+  try { localStorage.removeItem(FIT_KEY); } catch (e) {}
+}
+
+function fitStoreRead() {
+  try {
+    const v = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
+    if (v && v.step >= 2 && v.step <= 4 && Date.now() - num(v.at) < 3 * 86400000) return v;
+  } catch (e) {}
+  return null;
+}
+
+function effByte(sb) {
+  const b = num(sb);
+  return b >= 1 && b < 8 ? b : defaultButtonByte();
+}
+
+function fitRow() {
+  return fit ? fit.queue[fit.pos] : null;
+}
+
+async function fitStart(skipStep1) {
+  if (wiz || fit) return;
+  if (lastProbeSeq === null) {
+    alert("The controller didn't answer, or its firmware is too old for this (it needs V1.08 or later). Check the connection, or update on the OTA tab.");
+    return;
+  }
+  if (mappingsDirty) {
+    if (!confirm("The button table has unsaved changes. Save them and start?")) return;
+    if (!(await saveSetup())) {
+      alert("Couldn't save the button table, so the wheel swap didn't start. Try again.");
+      return;
+    }
+  }
+  fitResume = null;
+  fitStoreClear();
+  fit = newFit(1);
+  if (skipStep1) {
+    fitEnterStep2();
+    return;
+  }
+  fit.snapshot = cloneRows(mappings);
+  fitBeginPass();
+}
+
+// Start (or restart) step 1 or 3 from its first row.
+function fitBeginPass() {
+  // OpenHaldex / Charisma rows send nothing to the car, so step 1 skips them.
+  fit.queue = fit.step === 1 ? mappings.filter((m) => !(num(m.flags) & 0x0C)) : mappings.slice();
+  fit.pos = 0;
+  fit.got.clear();
+  fit.skipped.clear();
+  fit.none.clear();
+  fit.note = "";
+  fit.last = "";
+  fit.rest = null;
+  fit.pendingDup = null;
+  fit.extraOpen = false;
+  fit.scanAsked = false;
+  if (fit.step === 3) {
+    fit.snapshot = cloneRows(mappings);
+    fit.savedInStep3 = false;
+  }
+  renderFit();
+  if (!fit.queue.length) {
+    fitPassDone();
+    return;
+  }
+  fitRearm();
+}
+
+// Listen for the next press once the wheel is back at rest. Arming while the
+// last button is still held makes the firmware take that frame as its idle
+// baseline, and then no later press on that byte is ever captured (see
+// captureLearnedFromFrame() in LIN.cpp: the previous frame must equal the
+// baseline). Waits at most 4 s, then arms anyway.
+function fitRearm() {
+  if (!fit) return;
+  fit.armed = false;
+  fit.waitIdle = true;
+  fit.idleCount = 0;
+  fit.waitSince = Date.now();
+  renderFitLearn();
+}
+
+async function fitArm() {
+  if (!fit || fit.arming) return;
+  fit.arming = true;
+  try {
+    const res = await fetch("/api/learn/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rowIndex: 0, target: LEARN_PROBE }),
+    });
+    if (!res.ok) throw new Error("the device refused it — is the firmware up to date?");
+  } catch (err) {
+    if (fit) {
+      fit.arming = false;
+      fit.note = `Couldn't start listening: ${err.message}. Retrying…`;
+      fit.waitIdle = true;
+      fit.waitSince = Date.now();
+      fit.retryAt = Date.now() + 2000;
+      renderFitLearn();
+    }
+    return;
+  }
+  if (!fit) {
+    fetch("/api/learn/cancel", { method: "POST" }).catch(() => {});
+    return;
+  }
+  fit.arming = false;
+  if (fit.note.startsWith("Couldn't start listening")) fit.note = "";
+  fit.armed = true;
+  fit.baseSeq = lastProbeSeq;
+  fit.until = Date.now() + PROBE_WINDOW_MS;
+  renderFitLearn();
+}
+
+function fitCancelArm() {
+  if (fit && (fit.armed || fit.arming)) fetch("/api/learn/cancel", { method: "POST" }).catch(() => {});
+  if (fit) {
+    fit.armed = false;
+    fit.waitIdle = false;
+  }
+}
+
+function parseFrame(hex) {
+  if (typeof hex !== "string") return null;
+  const b = hex.trim().split(/\s+/).map((h) => parseInt(h, 16));
+  return b.length >= 8 && b.every(Number.isFinite) ? b : null;
+}
+
+// Wheel at rest: nothing on the button byte, and the paddle / horn / extra
+// bytes back where they sat at the start of the step. The scroll byte also
+// carries the press stage, and on a PQ wheel an absolute roller position
+// that never goes back, so it is not compared.
+function frameIdle(frame) {
+  if (!frame || frame.every((b) => b === 0)) return true;  // not answering: nothing to wait for
+  const bi = defaultButtonByte();
+  if (frame[bi] !== 0) return false;
+  const rot = num(document.getElementById("linRotaryByteIndex").value);
+  if (fit.rest) {
+    for (const i of [2, 5, 6, 7]) {
+      if (i !== bi && i !== rot && frame[i] !== fit.rest[i]) return false;
+    }
+  }
+  return true;
+}
+
+function onFitCapture(code, byte, rotary, force = false) {
+  const row = fitRow();
+  if (!row) return;
+  const dir = rowDirection(row);
+  fit.note = "";
+  fit.pendingDup = null;
+
+  if (dir) {
+    // A Scroll up / Scroll down row: the movement must match.
+    if (rotary === 0) {
+      fit.note = `Heard ${hexCode(code)} but no scroll movement. Turn the scroll wheel one click.`;
+      fitRearm();
+      return;
+    }
+    const turned = rotary > 0 ? FLAG_ROTARY_UP : FLAG_ROTARY_DOWN;
+    if (turned !== dir) {
+      fit.note = `That was a ${dirWord(turned).toUpperCase()} scroll; this one is ${dirWord(dir).toUpperCase()}.`;
+      fitRearm();
+      return;
+    }
+  }
+
+  if (fit.step === 1) {
+    row.newLinButtonId = code;
+    fit.carByte.set(row, byte);
+    fit.got.set(row, { code, byte });
+    fit.skipped.delete(row);
+    setMappingsDirty(true);
+    renderMappings();
+    fit.last = `“${row.name}” sends ${hexCode(code)} to the car.`;
+    fitAdvance();
+    return;
+  }
+
+  // Step 3. A move no plain button makes (down, or more than one click), or a
+  // code already known as a scroll wheel, means a roller: it needs one row per
+  // direction, which the scroll-wheel wizard sets up.
+  const isRoller = !dir && rotary !== 0 && byte === defaultButtonByte() &&
+    (rotary < 0 || Math.abs(rotary) >= 2 || rollerCodes.has(code));
+
+  if (!force && !isRoller) {
+    const trig = num(row.flags) & TRIGGER_MASK;
+    const other = mappings.find((m) => m !== row && fit.got.has(m) &&
+      num(m.oldButtonId) === code && effByte(m.sourceByte) === effByte(byte) &&
+      (num(m.flags) & TRIGGER_MASK) === trig);
+    if (other) {
+      fit.pendingDup = { code, byte, rotary };
+      fit.note = `${hexCode(code)} is already doing “${other.name}”. Press a different button, or use it for both.`;
+      fitRearm();
+      return;
+    }
+  }
+
+  fit.scrollRowFlags = num(row.flags);
+  row.oldButtonId = code;
+  row.sourceByte = byte;
+  // As Learn does (captureLearned()): a direction left over from the old
+  // wheel would stop a plain button matching.
+  if (!dir) row.flags = num(row.flags) & ~(FLAG_ROTARY_UP | FLAG_ROTARY_DOWN);
+  if (row.fitExtra && !num(row.newLinButtonId) && protocolColumns().sameFamily) row.newLinButtonId = code;
+  fit.got.set(row, { code, byte });
+  fit.none.delete(row);
+  fit.skipped.delete(row);
+  setMappingsDirty(true);
+
+  if (isRoller) {
+    row.flags = (num(row.flags) & ~TRIGGER_MASK) | (rotary > 0 ? FLAG_ROTARY_UP : FLAG_ROTARY_DOWN);
+    if (!rollerCodes.has(code)) setRollerCodes([...rollerCodes, code]);
+    renderMappings();
+    fit.armed = false;
+    fit.waitIdle = false;
+    renderFitLearn();
+    openScrollWizard(mappings.indexOf(row), { fromFit: true });
+    if (!wiz) {
+      // Couldn't open (shouldn't happen): keep it as a plain row.
+      row.flags = fit.scrollRowFlags;
+      fitAdvance();
+    }
+    return;
+  }
+
+  renderMappings();
+  fit.last = `“${row.name}” is now ${hexCode(code)}${effByte(byte) !== defaultButtonByte() ? ` (frame byte ${byte})` : ""}.`;
+  fitAdvance();
+}
+
+// rows: the rows the scroll-wheel wizard put in place of the learned row, or
+// null when it was cancelled.
+function fitAfterScrollWizard(rows) {
+  if (!fit || fit.step !== 3) return;
+  const row = fitRow();
+  if (rows) {
+    fit.savedInStep3 = true;  // the scroll wizard saves straight away
+    rows.forEach((r) => fit.got.set(r, { code: num(r.oldButtonId), byte: num(r.sourceByte) }));
+    fit.queue.splice(fit.pos, 1, ...rows);
+    fit.pos += rows.length - 1;
+    fit.last = `Scroll wheel set up: ${rows.map((r) => r.name).join(", ")}.`;
+  } else if (row) {
+    row.flags = fit.scrollRowFlags;
+    renderMappings();
+    fit.note = `Scroll wheel setup cancelled: “${row.name}” stays on ${hexCode(row.oldButtonId)} as one row (use Split in the table later).`;
+  }
+  fitAdvance();
+}
+
+function fitAdvance() {
+  fit.pos++;
+  fit.pendingDup = null;
+  if (fit.pos >= fit.queue.length) {
+    fitPassDone();
+    return;
+  }
+  renderFitLearn();
+  fitRearm();
+}
+
+async function fitPassDone() {
+  if (!fit) return;
+  fitCancelArm();
+  fit.saving = true;
+  fit.saveFailed = false;
+  renderFit();
+  const ok = await saveSetup();
+  if (!fit) return;
+  fit.saving = false;
+  if (!ok) {
+    fit.saveFailed = true;
+    renderFit();
+    return;
+  }
+  if (fit.step === 1) fitEnterStep2();
+  else fitEnterStep4();
+}
+
+function fitEnterStep2() {
+  fitCancelArm();
+  fit.step = 2;
+  fit.swapPhase = "fit";
+  fit.scanAsked = false;
+  fit.offline = false;
+  fitStore();
+  renderFit();
+}
+
+async function fitEnterStep3() {
+  if (fit.forgetRollers) {
+    // The old wheel's scroll-wheel codes mean nothing on the new one and could
+    // collide with one of its buttons. A roller is re-detected when scrolled.
+    try {
+      await fetch("/api/rollers/clear", { method: "POST" });
+      setRollerCodes([]);
+      renderMappings();
+    } catch (e) {}
+  }
+  if (!fit) return;
+  fit.step = 3;
+  fitStore();
+  fitBeginPass();
+}
+
+function fitEnterStep4() {
+  fit.step = 4;
+  fit.queue.forEach((r) => { delete r.fitExtra; });
+  fitStore();
+  renderFit();
+}
+
+function fitFinish() {
+  fitCancelArm();
+  mappings.forEach((r) => { delete r.fitExtra; });
+  fit = null;
+  fitStoreClear();
+  renderFit();
+  setStatus("New wheel fitted. Keep the exported backup somewhere safe.");
+}
+
+async function fitCancel() {
+  if (!fit) return;
+  if (fit.step === 1) {
+    if (fit.got.size && !confirm("Stop, and forget the codes recorded so far?")) return;
+    mappings = cloneRows(fit.snapshot || mappings);
+    renderMappings();
+    setMappingsDirty(false);
+  } else if (fit.step === 2) {
+    if (!confirm("Stop fitting a new wheel? The To car codes recorded in step 1 stay saved.")) return;
+  } else if (fit.step === 3) {
+    if (!confirm("Stop? The new wheel's buttons learned in this step are thrown away and the table goes back to how it was at the start of this step.")) return;
+    fitCancelArm();
+    mappings = cloneRows(fit.snapshot || mappings);
+    renderMappings();
+    const resave = fit.savedInStep3;
+    fit = null;
+    if (resave) await saveSetup();
+    else setMappingsDirty(false);
+  }
+  fitCancelArm();
+  fit = null;
+  fitStoreClear();
+  renderFit();
+}
+
+function fitSkip() {
+  const row = fitRow();
+  if (!row) return;
+  if (!fit.got.has(row)) fit.skipped.add(row);
+  fit.note = "";
+  fit.last = `“${row.name}” left as it was.`;
+  fitAdvance();
+}
+
+function fitNotOnWheel() {
+  const row = fitRow();
+  if (!row) return;
+  row.oldButtonId = 0;
+  row.sourceByte = 0;
+  fit.got.delete(row);
+  fit.skipped.delete(row);
+  fit.none.add(row);
+  setMappingsDirty(true);
+  renderMappings();
+  fit.note = "";
+  fit.last = `“${row.name}” is off (From wheel 00): the new wheel has no button for it.`;
+  fitAdvance();
+}
+
+function fitJump(i) {
+  if (!fit || i < 0 || i >= fit.queue.length || wiz) return;
+  fit.pos = i;
+  fit.note = "";
+  fit.pendingDup = null;
+  renderFitLearn();
+  fitRearm();
+}
+
+function fitAddExtra() {
+  const input = document.getElementById("fitExtraName");
+  const name = ((input && input.value.trim()) || "Extra button").slice(0, 17);
+  if (mappings.length >= MAX_MAPPING_ROWS) {
+    fit.note = `The table holds ${MAX_MAPPING_ROWS} rows — delete one to add another.`;
+    renderFitLearn();
+    return;
+  }
+  const row = {
+    name, oldButtonId: 0, newLinButtonId: 0, canByteIndex: 255, canBitIndex: 0,
+    resistiveOhm: 0, flags: 0, openHaldexMode: 0, sourceByte: 0, fitExtra: true,
+  };
+  mappings.push(row);
+  setMappingsDirty(true);
+  renderMappings();
+  fit.queue.splice(fit.pos, 0, row);  // ask for it next
+  fit.extraOpen = false;
+  fit.note = "";
+  renderFit();
+  fitRearm();
+}
+
+function fitResumeRun() {
+  const saved = fitResume;
+  fitResume = null;
+  if (!saved || fit) return;
+  fit = newFit(saved.step);
+  fit.swapPhase = saved.swapPhase === "detect" ? "detect" : "fit";
+  fit.step2Since = Date.now();
+  if (saved.carBytes) {
+    Object.keys(saved.carBytes).forEach((k) => {
+      const r = mappings[Number(k)];
+      if (r && Array.isArray(saved.names) && r.name === saved.names[Number(k)]) fit.carByte.set(r, num(saved.carBytes[k]));
+    });
+  }
+  if (fit.step === 3) {
+    fitBeginPass();
+  } else {
+    if (fit.step === 4) fit.queue = mappings.slice();
+    renderFit();
+  }
+}
+
+// After every /api/setup load.
+function fitOnSetupLoaded() {
+  if (fit && (fit.step === 1 || fit.step === 3)) {
+    // Import (or similar) replaced the table under a running step.
+    fitCancelArm();
+    if (fit.step === 1) fit.snapshot = cloneRows(mappings);
+    fitBeginPass();
+    fit.note = "The button table was reloaded, so this step started again.";
+    renderFitLearn();
+    return;
+  }
+  if (fitResumeChecked) return;
+  fitResumeChecked = true;
+  fitResume = fitStoreRead();
+  if (fitResume) renderFit();
+}
+
+// The status poll failed: during step 2 that is the ignition going off.
+function fitNoteOffline() {
+  if (fit && fit.step === 2 && !fit.offline) {
+    fit.offline = true;
+    renderFitLive();
+  }
+}
+
+function updateFitFromStatus(s) {
+  if (!fit) return;
+  if (fit.offline) {
+    fit.offline = false;
+    if (fit.step === 2 && fit.swapPhase === "fit") {
+      // Back after the ignition cycle: the new wheel should be on.
+      fit.swapPhase = "detect";
+      fit.step2Since = Date.now();
+      fit.scanAsked = false;
+      fitStore();
+      renderFit();
+    }
+  }
+
+  if ((fit.step === 1 || fit.step === 3) && !wiz && !fit.saving && fit.pos < fit.queue.length) {
+    const bi = defaultButtonByte();
+    const frame = parseFrame(s.incomingLinData);
+    if (!fit.rest && frame && frame[bi] === 0 && frame.some((b) => b !== 0)) fit.rest = frame;
+
+    if (fit.waitIdle && !fit.arming && Date.now() >= fit.retryAt) {
+      fit.idleCount = frameIdle(frame) ? fit.idleCount + 1 : 0;
+      if (fit.idleCount >= 2 || Date.now() - fit.waitSince > 4000) {
+        fit.waitIdle = false;
+        fitArm();
+      }
+    } else if (fit.armed) {
+      if (typeof s.learnProbeSeq === "number") {
+        if (fit.baseSeq === null) fit.baseSeq = s.learnProbeSeq;
+        if (s.learnProbeSeq !== fit.baseSeq) {
+          fit.armed = false;
+          onFitCapture(num(s.learnProbeCode), num(s.learnProbeByte), num(s.learnProbeRotary));
+          renderFitLive();
+          return;
+        }
+      }
+      // The 10 s window ran out with nothing pressed: keep listening.
+      if (!s.learnActive && Date.now() > fit.until) fitRearm();
+    }
+  }
+
+  if (fit.step === 2 && fit.swapPhase === "detect" && !fit.scanAsked && linScan &&
+      Date.now() - fit.step2Since > 1500) {
+    fitScan();
+  }
+  renderFitLive();
+}
+
+function fitScan() {
+  if (!fit) return;
+  fit.scanAsked = true;
+  fit.scanSeqAtAsk = linScan ? linScan.seq : null;
+  requestLinScan();
+  renderFitLive();
+}
+
+// ---- rendering ----
+
+function fitStepsHtml() {
+  return `<div class="fit-steps">${FIT_STEP_NAMES.map((n, i) => {
+    const k = i + 1;
+    const cls = k === fit.step ? " active" : k < fit.step ? " done" : "";
+    return `<div class="fit-step${cls}"><span class="ota-step-num">${k}</span><span class="fit-step-label">${n}</span></div>`;
+  }).join("")}</div>`;
+}
+
+function fitPromptText(row) {
+  const name = row.name || "this button";
+  const dir = rowDirection(row);
+  const long = (num(row.flags) & TRIGGER_MASK) === FLAG_PRESS_LONG;
+  if (fit.step === 1) {
+    if (dir) return `Scroll ${dirWord(dir).toUpperCase()} one click for “${name}” on your current wheel`;
+    return `${long ? "Press and hold" : "Press"} “${name}” on your current wheel`;
+  }
+  if (dir) return `Turn the scroll wheel you want for “${name}” ${dirWord(dir).toUpperCase()} one click`;
+  return `${long ? "Press and hold" : "Press"} the button you want to do “${name}”`;
+}
+
+function fitDetectHtml() {
+  if (fit.offline) {
+    return `<div class="fit-wheel-status"><span class="dot"></span><span>Controller not reachable — normal while the ignition is off. Rejoin its Wi-Fi once it's back on.</span></div>`;
+  }
+  const wp = selectedWheelProtocol();
+  let h = `<div class="fit-wheel-status"><span class="dot${lin1Healthy ? " live" : ""}"></span>` +
+    `<span>${lin1Healthy ? "Wheel is talking" : "Wheel not answering"} · ${escapeAttr(WHEEL_PROTOCOL_NAMES[wp] || String(wp))}</span>` +
+    `<button class="btn tiny secondary" type="button" data-fit="scan"${linScanPending ? " disabled" : ""}>${linScanPending ? "Scanning…" : "Detect wheel"}</button></div>`;
+  if (!fit.scanAsked) return h;
+  if (linScanPending) return h;
+  if (linScanError) return h + `<div class="fit-detect warn">${escapeAttr(linScanError)}</div>`;
+  if (!linScan || linScan.seq === fit.scanSeqAtAsk) return h;
+  const sug = num(linScan.suggest);
+  let t = `Detected ${escapeAttr(scanSuggestText(sug))}.`;
+  if (sug <= 7 && sug !== wp) {
+    t += ` <button class="btn tiny primary" type="button" data-fit-switch="${sug}">Switch Wheel Protocol to ${WHEEL_PROTOCOL_NAMES[sug]}</button>`;
+  } else if (sug <= 7) {
+    t += " That matches the selected Wheel Protocol.";
+  } else if (sug === SCAN_UNKNOWN) {
+    t += ` ${escapeAttr(HINT_UNKNOWN)}`;
+  } else if (sug === SCAN_NOTHING) {
+    t += ` ${escapeAttr(HINT_NOTHING)}`;
+  }
+  return h + `<div class="fit-detect">${t}</div>`;
+}
+
+function fitListHtml() {
+  return fit.queue.map((row, i) => {
+    const g = fit.got.get(row);
+    const state = g ? hexCode(g.code)
+      : fit.none.has(row) ? "off"
+      : fit.skipped.has(row) ? "skipped"
+      : i === fit.pos ? "now" : "";
+    const cls = i === fit.pos ? "cur" : g ? "done" : "";
+    return `<li class="${cls}" data-fit-jump="${i}"><span>${escapeAttr(row.name || "(no name)")}</span><span class="fit-list-v">${state}</span></li>`;
+  }).join("");
+}
+
+function fitWarnings() {
+  const out = [];
+  mappings.forEach((m) => {
+    const name = m.name || "(no name)";
+    const f = num(m.flags);
+    if (!num(m.oldButtonId)) return;
+    const outputs = (typeof m.canByteIndex === "number" && m.canByteIndex < 8) || num(m.resistiveOhm) || (f & 0x0D);
+    if (!num(m.newLinButtonId) && !outputs) {
+      out.push(`“${name}” does nothing yet: set its To car code or an output in the table below.`);
+    }
+    const cb = fit.carByte.get(m);
+    if (cb !== undefined && effByte(cb) !== effByte(m.sourceByte) && !(f & 0x0C)) {
+      out.push(`“${name}”: the car's code came from frame byte ${effByte(cb)}, the new wheel sends it on byte ${effByte(m.sourceByte)}. The controller passes it on in byte ${effByte(m.sourceByte)}, which the car may not read.`);
+    }
+  });
+  return out;
+}
+
+// Full redraw: on every step / state change, never from the status poll (it
+// would wipe the selects and the name box mid-edit).
+function renderFit() {
+  const body = document.getElementById("fitBody");
+  if (!body) return;
+  body._html = undefined;
+
+  if (!fit) {
+    let h = `<p class="hint">Swapping to a different steering wheel? Four steps: record what your current wheel sends (what the car understands), fit the new wheel, pick which new button does each job, then test and save.</p>`;
+    if (fitResume) {
+      h += `<div class="fit-resume">A wheel swap is part-way through (step ${fitResume.step}: ${FIT_STEP_NAMES[fitResume.step - 1]}).` +
+        `<div class="button-row"><button class="btn primary" type="button" data-fit="resume">Carry on</button>` +
+        `<button class="btn secondary" type="button" data-fit="resume-drop">Start over</button></div></div>`;
+    } else {
+      h += `<div class="button-row"><button class="btn primary" type="button" data-fit="start">Start</button>` +
+        `<button class="btn secondary" type="button" data-fit="start-skip" title="Skip step 1: the To car column already holds the codes the car understands">The car's codes are already set</button></div>` +
+        `<p class="hint fit-small">Start with the car's own wheel (or one the car already understands) fitted and working: the Dashboard should show a button when you press it.</p>`;
+    }
+    body.innerHTML = h;
+    return;
+  }
+
+  let h = fitStepsHtml();
+  if (fit.step === 1 || fit.step === 3) {
+    h += `<div id="fitWheel" class="fit-wheel"></div>`;
+    if (fit.saving || fit.saveFailed) {
+      h += fit.saving
+        ? `<div class="fit-prompt">Saving to the controller…</div>`
+        : `<div class="fit-prompt">Couldn't save.</div><div class="fit-note">Check you're still connected to the controller, then try again.</div>` +
+          `<div class="button-row"><button class="btn primary" type="button" data-fit="retry-save">Try again</button></div>`;
+    } else {
+      h += `<div class="fit-count" id="fitCount"></div>` +
+        `<div class="fit-prompt" id="fitPrompt"></div>` +
+        `<div class="fit-sub" id="fitSub"></div>` +
+        `<div class="fit-last" id="fitLast"></div>` +
+        `<div class="fit-note" id="fitNote"></div>` +
+        `<div class="button-row">` +
+        `<button class="btn secondary" type="button" data-fit="dup" id="fitDupBtn" hidden>Use it for both</button>` +
+        `<button class="btn secondary" type="button" data-fit="skip">Skip</button>` +
+        (fit.step === 3 ? `<button class="btn secondary" type="button" data-fit="none" title="The new wheel has no button for this: turn the row off (From wheel 00)">Not on this wheel</button>` : "") +
+        `<button class="btn secondary" type="button" data-fit="back">Back</button></div>`;
+      if (fit.step === 3) {
+        h += fit.extraOpen
+          ? `<div class="fit-extra"><label>Name of the extra button<input id="fitExtraName" type="text" maxlength="17" placeholder="Extra button"></label>` +
+            `<div class="button-row"><button class="btn primary" type="button" data-fit="extra-add">Add and learn it</button>` +
+            `<button class="btn secondary" type="button" data-fit="extra-close">Cancel</button></div></div>`
+          : `<div class="button-row"><button class="btn secondary" type="button" data-fit="extra-open">+ Add extra button</button></div>`;
+      }
+      h += `<details class="fit-list"><summary>All buttons in this step</summary><ol id="fitList"></ol></details>`;
+    }
+    h += `<div class="button-row fit-foot">` +
+      (fit.saving || fit.saveFailed ? "" : `<button class="btn secondary" type="button" data-fit="pass-done">Done — leave the rest as they are</button>`) +
+      `<button class="btn danger" type="button" data-fit="cancel">Cancel</button></div>`;
+  } else if (fit.step === 2) {
+    const wpSel = document.getElementById("wheelProtocol");
+    const actSel = document.getElementById("mqbActPreset");
+    const opts = (sel) => [...sel.options].map((o) =>
+      `<option value="${escapeAttr(o.value)}"${o.value === sel.value ? " selected" : ""}>${escapeAttr(o.text)}</option>`).join("");
+    h += `<ol class="fit-howto">` +
+      `<li>Turn the ignition <strong>off</strong>.</li>` +
+      `<li>Fit the new wheel: LIN, power and ground, plus horn and paddles if it has them.</li>` +
+      `<li>Turn the ignition <strong>on</strong>. If your phone dropped the <strong>MFSWController</strong> Wi-Fi, rejoin it. This page carries on from here, even if you reopen it.</li>` +
+      `</ol>` +
+      `<div class="form-grid">` +
+      `<label>New wheel's protocol<select data-fit-sel="wp">${opts(wpSel)}</select></label>` +
+      (wpSel.value === "1" ? `<label>Activation preset (MQB)<select data-fit-sel="act">${opts(actSel)}</select></label>` : "") +
+      (wpSel.value === "7" ? `<p class="hint">Custom: set the wheel's frames in <strong>Setup &rarr; Advanced &rarr; Custom wheel</strong> first.</p>` : "") +
+      `<label class="toggle-row"><span>Forget the old wheel's scroll-wheel codes</span><input type="checkbox" data-fit-sel="forget"${fit.forgetRollers ? " checked" : ""}></label>` +
+      `</div>`;
+    if (fit.swapPhase === "fit") {
+      h += `<div id="fitWheel" class="fit-wheel"></div>` +
+        `<div class="button-row"><button class="btn primary" type="button" data-fit="fitted">The new wheel is on and the ignition is on</button></div>`;
+    } else {
+      h += `<div id="fitWheel" class="fit-wheel"></div>` +
+        `<div class="button-row"><button class="btn primary" type="button" data-fit="next3" id="fitNext3">Next: the new wheel's buttons</button></div>`;
+    }
+    h += `<div class="button-row fit-foot"><button class="btn danger" type="button" data-fit="cancel">Cancel</button></div>`;
+  } else {
+    const warns = fitWarnings();
+    h += `<p class="hint">Saved to the controller. Press each button on the new wheel: its row lights up. Then export a backup.</p>` +
+      `<div class="fit-sub" id="fitPressed">Waiting for a press…</div>` +
+      `<ul class="fit-test-list" id="fitTestList">${mappings.map((m, i) =>
+        `<li data-row="${i}"><span class="fit-test-name">${escapeAttr(m.name || "(no name)")}</span>` +
+        `<span class="fit-test-codes">${num(m.oldButtonId) ? hexCode(m.oldButtonId) : "off"} &rarr; ${hexCode(m.newLinButtonId)}</span></li>`).join("")}</ul>` +
+      (warns.length ? `<ul class="fit-warn">${warns.map((w) => `<li>${escapeAttr(w)}</li>`).join("")}</ul>` : "") +
+      `<div class="button-row"><button class="btn primary" type="button" data-fit="export">Export backup</button>` +
+      `<button class="btn secondary" type="button" data-fit="redo3">Back to step 3</button>` +
+      `<button class="btn" type="button" data-fit="finish">Finish</button></div>`;
+  }
+  body.innerHTML = h;
+  renderFitLearn();
+  renderFitLive();
+}
+
+// The prompt part of steps 1 and 3.
+function renderFitLearn() {
+  if (!fit || (fit.step !== 1 && fit.step !== 3) || fit.saving || fit.saveFailed) return;
+  const row = fitRow();
+  const total = fit.queue.length;
+  setText("fitCount", row ? `${fit.step === 1 ? "Current wheel" : "New wheel"} · button ${fit.pos + 1} of ${total}` : "");
+  setText("fitPrompt", row ? fitPromptText(row) : "");
+  setText("fitLast", fit.last);
+  setText("fitNote", fit.note);
+  const dup = document.getElementById("fitDupBtn");
+  if (dup) dup.hidden = !fit.pendingDup;
+  const list = document.getElementById("fitList");
+  if (list) setHtml(list, fitListHtml());
+  renderFitSub();
+}
+
+function renderFitSub() {
+  const el = document.getElementById("fitSub");
+  if (!el || !fit) return;
+  let t;
+  if (wiz) t = "Scroll wheel setup is open…";
+  else if (fit.armed) t = "Listening…";
+  else if (fit.waitIdle && Date.now() - fit.waitSince > 600) t = "Let go of the button…";
+  else t = "Getting ready…";
+  const row = fitRow();
+  if (fit.step === 3 && row && !rowDirection(row)) t += " (For a scroll wheel, turn it DOWN one click.)";
+  if (el.textContent !== t) el.textContent = t;
+  el.classList.toggle("on", !!fit.armed);
+}
+
+// Live parts, refreshed on every status poll.
+function renderFitLive() {
+  if (!fit) return;
+  const wheel = document.getElementById("fitWheel");
+  if (wheel) setHtml(wheel, fitDetectHtml());
+  if (fit.step === 1 || fit.step === 3) renderFitSub();
+  if (fit.step === 2) {
+    const next = document.getElementById("fitNext3");
+    if (next) {
+      const t = lin1Healthy ? "Next: the new wheel's buttons" : "Continue anyway";
+      if (next.textContent !== t) next.textContent = t;
+      next.classList.toggle("primary", lin1Healthy);
+      next.classList.toggle("secondary", !lin1Healthy);
+    }
+  }
+  if (fit.step === 4) {
+    setText("fitPressed", lastPressText ? `Last press: ${lastPressText}` : "Waiting for a press…");
+    document.querySelectorAll("#fitTestList li[data-row]").forEach((li) => {
+      li.classList.toggle("live", Number(li.dataset.row) === liveRowIdx);
+    });
+  }
+}
+
+function wireFitWizard() {
+  const card = document.getElementById("fitCard");
+  if (!card) return;
+  card.addEventListener("click", (e) => {
+    const sw = e.target.closest("[data-fit-switch]");
+    if (sw && fit) {
+      setWheelProtocol(Number(sw.dataset.fitSwitch), false);
+      if (fit.step === 2) renderFit(); else renderFitLive();
+      return;
+    }
+    const jump = e.target.closest("[data-fit-jump]");
+    if (jump && fit) {
+      fitJump(Number(jump.dataset.fitJump));
+      return;
+    }
+    const b = e.target.closest("[data-fit]");
+    if (!b) return;
+    switch (b.dataset.fit) {
+      case "start": fitStart(false); break;
+      case "start-skip": fitStart(true); break;
+      case "resume": fitResumeRun(); break;
+      case "resume-drop":
+        if (!confirm("Start over? (The To car codes already saved stay in the table.)")) break;
+        fitResume = null;
+        fitStoreClear();
+        renderFit();
+        break;
+      case "skip": fitSkip(); break;
+      case "none": fitNotOnWheel(); break;
+      case "back": if (fit.pos > 0) fitJump(fit.pos - 1); break;
+      case "dup": {
+        const d = fit.pendingDup;
+        if (d) {
+          fit.pendingDup = null;
+          fitCancelArm();
+          onFitCapture(d.code, d.byte, d.rotary, true);
+        }
+        break;
+      }
+      case "extra-open":
+        fit.extraOpen = true;
+        renderFit();
+        { const el = document.getElementById("fitExtraName"); if (el) el.focus(); }
+        break;
+      case "extra-close": fit.extraOpen = false; renderFit(); break;
+      case "extra-add": fitAddExtra(); break;
+      case "pass-done": fitPassDone(); break;
+      case "retry-save": fitPassDone(); break;
+      case "cancel": fitCancel(); break;
+      case "scan": fitScan(); break;
+      case "fitted":
+        fit.swapPhase = "detect";
+        fit.step2Since = Date.now();
+        fit.scanAsked = false;
+        fitStore();
+        renderFit();
+        break;
+      case "next3": fitEnterStep3(); break;
+      case "export": exportSettings(); break;
+      case "redo3": fit.step = 3; fitStore(); fitBeginPass(); break;
+      case "finish": fitFinish(); break;
+    }
+  });
+  card.addEventListener("change", (e) => {
+    const el = e.target.closest("[data-fit-sel]");
+    if (!el || !fit) return;
+    if (el.dataset.fitSel === "wp") {
+      setWheelProtocol(Number(el.value), false);
+      fit.scanAsked = false;  // the old result was about the other protocol
+      renderFit();
+    } else if (el.dataset.fitSel === "act") {
+      // Same path as Setup's own preset select: fills the bytes and saves.
+      const preset = document.getElementById("mqbActPreset");
+      preset.value = el.value;
+      preset.dispatchEvent(new Event("change"));
+    } else if (el.dataset.fitSel === "forget") {
+      fit.forgetRollers = el.checked;
+    }
+  });
+  card.addEventListener("keydown", (e) => {
+    if (e.target.id === "fitExtraName" && e.key === "Enter") fitAddExtra();
+  });
+  renderFit();
 }
 

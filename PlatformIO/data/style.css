@@ -452,7 +452,7 @@ input[type="range"]::-moz-range-thumb, .slider::-moz-range-thumb, .slider-inline
 }
 .mapping-table {
   width: 100%;
-  min-width: 1352px;
+  min-width: 1345px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -472,21 +472,21 @@ input[type="range"]::-moz-range-thumb, .slider::-moz-range-thumb, .slider-inline
   letter-spacing: .4px;
   white-space: nowrap;
 }
-.mapping-table th:nth-child(1) { width: 170px; }
-.mapping-table th:nth-child(2),
-.mapping-table th:nth-child(4) { width: 100px; }
-.mapping-table th:nth-child(3),
-.mapping-table th:nth-child(5) { width: 70px; }
-.mapping-table th:nth-child(6) { width: 85px; }
-.mapping-table th:nth-child(7) { width: 75px; }
-.mapping-table th:nth-child(8) { width: 115px; }
-.mapping-table th:nth-child(9) { width: 52px; }
-.mapping-table th:nth-child(10) { width: 55px; }
-.mapping-table th:nth-child(11) { width: 110px; }
-.mapping-table th:nth-child(12) { width: 105px; }
-.mapping-table th:nth-child(13) { width: 85px; }
-.mapping-table th:nth-child(14) { width: 85px; }
-.mapping-table th:nth-child(15) { width: 75px; }
+/* column widths (wide screens; the phone layout is further down) */
+.mapping-table th.c-name { width: 170px; }
+.mapping-table th.c-from,
+.mapping-table th.c-to { width: 150px; }
+.mapping-table th.w-canbyte { width: 85px; }
+.mapping-table th.w-canbit { width: 75px; }
+.mapping-table th.w-res { width: 115px; }
+.mapping-table th.w-chk { width: 60px; }
+.mapping-table th.w-oh { width: 105px; }
+.mapping-table th.w-ohmode { width: 105px; }
+.mapping-table th.w-cha { width: 85px; }
+.mapping-table th.w-trig { width: 110px; }
+.mapping-table th.w-del { width: 75px; }
+.mapping-table .c-more { display: none; }  /* Outputs fold toggle: phones only */
+.mapping-table td.c-chk { text-align: center; }
 .mapping-table th:last-child,
 .mapping-table td:last-child { border-right: none; }
 .mapping-table tbody tr:last-child td { border-bottom: none; }
@@ -495,8 +495,21 @@ input[type="range"]::-moz-range-thumb, .slider::-moz-range-thumb, .slider-inline
 /* row matching an unexpected frame byte — usually a mis-learned row */
 .mapping-table input.warn-cell,
 .mapping-table select.warn-cell { border-color: var(--accent-2); }
+/* code cell: 0x prefix, hex input and its Learn button side by side */
+.code-cell { display: flex; align-items: center; gap: 4px; }
+.code-pre { color: var(--muted); font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; flex: none; }
+.mapping-table .hex-input {
+  flex: 1 1 auto; width: 44px; min-width: 40px;
+  font-family: "Cascadia Code", Consolas, monospace; text-transform: uppercase;
+}
+.mapping-table .code-cell .btn.tiny { width: auto; flex: none; padding: 7px 8px; min-width: 50px; }
+.mapping-table .btn.tiny.armed { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px rgba(36, 209, 196, .3); }
 /* scroll-wheel Split / + row button under the Trigger select */
-.mapping-table td > select + .btn.tiny { margin-top: 4px; }
+.trig-cell { display: flex; flex-direction: column; gap: 4px; }
+/* row whose button is held right now */
+.mapping-table tr.live td { background: rgba(36, 209, 196, .12); }
+.mapping-table tr.live td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.table-hint { margin-bottom: 10px; }
 #forgetRollersBtn { width: auto; margin-left: 8px; padding: 3px 10px; font-size: 12px; }
 /* unsaved button-table edits */
 .unsaved-banner {
@@ -846,4 +859,224 @@ input, textarea, select, pre, code, [contenteditable] {
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
+}
+
+/* ==========================================================================
+   MFSW V1.11: Fit a new wheel wizard, wheel-detect banner, LIN1 scan,
+   Setup sub-headings and the phone layout of the button table.
+   ========================================================================== */
+[hidden] { display: none !important; }
+
+.sub-head {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--accent);
+}
+
+/* wheel-detect banner (Dashboard, Setup) */
+.detect-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 176, 46, .5);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 10px;
+  background: rgba(255, 176, 46, .06);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.card .detect-banner { margin-bottom: 12px; }
+.detect-text { flex: 1 1 220px; }
+.detect-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn.tiny { padding: 5px 10px; font-size: 12px; }
+
+/* LIN1 scan result (Diagnostics > LIN Monitor) */
+.scan-result {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+.scan-head { color: var(--text); line-height: 1.45; margin-bottom: 4px; }
+.scan-head.warn { color: var(--accent-2); }
+.scan-hit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.scan-id { font-family: "Cascadia Code", Consolas, monospace; color: var(--accent); font-weight: 700; }
+.scan-meta { color: var(--muted); font-size: 12px; }
+.scan-hit code {
+  flex: 1 1 100%;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* Fit a new wheel */
+.fit-card { border-color: rgba(36, 209, 196, .35); }
+.fit-small { margin: 10px 0 0; font-size: 12px; }
+.fit-resume {
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: rgba(36, 209, 196, .06);
+  font-size: 13px;
+}
+.fit-steps { display: flex; gap: 6px; margin-bottom: 14px; }
+.fit-step {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.fit-step-label { overflow: hidden; text-overflow: ellipsis; }
+.fit-step.active { border-left-color: var(--accent); color: var(--text); }
+.fit-step.active .ota-step-num { background: var(--accent); color: var(--bg); }
+.fit-step.done { border-left-color: var(--ok); color: var(--ok); }
+.fit-step.done .ota-step-num { background: var(--ok); color: var(--bg); }
+.fit-wheel { margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+.fit-wheel-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fit-wheel-status .dot { flex: none; }
+.fit-wheel-status span:nth-child(2) { flex: 1 1 140px; }
+.fit-detect { margin-top: 8px; color: var(--text); line-height: 1.45; }
+.fit-detect.warn { color: var(--accent-2); }
+.fit-detect .btn { margin-left: 4px; }
+.fit-count { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+.fit-prompt { margin: 6px 0; font-size: 20px; font-weight: 700; line-height: 1.3; color: var(--text); }
+.fit-sub { color: var(--muted); font-size: 13px; }
+.fit-sub.on { color: var(--accent); }
+.fit-sub.on::before {
+  content: "";
+  display: inline-block;
+  width: 8px; height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  animation: fit-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes fit-pulse { from { opacity: .35; } to { opacity: 1; } }
+.fit-last { min-height: 1.3em; margin-top: 8px; color: var(--ok); font-size: 13px; }
+.fit-note { min-height: 1.3em; color: var(--accent-2); font-size: 13px; line-height: 1.4; }
+.fit-extra { margin-top: 10px; display: grid; gap: 8px; }
+.fit-extra label { display: grid; gap: 6px; }
+.fit-list { margin-top: 12px; font-size: 13px; }
+.fit-list summary { cursor: pointer; color: var(--muted); }
+.fit-list ol { margin: 8px 0 0; padding: 0; list-style: none; }
+.fit-list li, .fit-test-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.fit-list li.cur { color: var(--accent); font-weight: 600; }
+.fit-list li.done .fit-list-v { color: var(--ok); }
+.fit-list-v, .fit-test-codes { font-family: "Cascadia Code", Consolas, monospace; color: var(--muted); flex: none; }
+.fit-howto { margin: 0 0 14px 20px; font-size: 14px; line-height: 1.5; color: var(--text); }
+.fit-howto li { margin-bottom: 6px; }
+.fit-test-list { list-style: none; margin: 10px 0; padding: 0; font-size: 13px; }
+.fit-test-list li { cursor: default; border-left: 3px solid transparent; }
+.fit-test-list li.live { background: rgba(36, 209, 196, .15); border-left-color: var(--accent); }
+.fit-test-list li.live .fit-test-codes { color: var(--accent); }
+.fit-warn { margin: 0 0 12px 18px; color: var(--accent-2); font-size: 13px; line-height: 1.45; }
+.fit-foot { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+@media (max-width: 480px) {
+  /* four step chips in ~290 px: name only the current one */
+  .fit-step { flex: 0 0 auto; }
+  .fit-step:not(.active) .fit-step-label { display: none; }
+  .fit-step.active { flex: 1 1 auto; }
+  .fit-prompt { font-size: 18px; }
+}
+
+/* Button table on a phone: each row becomes a small card. Name, From wheel
+   and To car (each with its Learn button) are always shown; the outputs fold
+   away behind the row's Outputs toggle. */
+@media (max-width: 700px) {
+  .table-wrap { overflow-x: visible; border: none; background: transparent; border-radius: 0; }
+  .mapping-table { min-width: 0; table-layout: auto; }
+  .mapping-table thead { display: none; }
+  .mapping-table,
+  .mapping-table tbody { display: block; width: 100%; }
+  .mapping-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+    margin-bottom: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel-2);
+  }
+  .mapping-table td,
+  .mapping-table tbody tr:last-child td { display: block; padding: 0; border: none; min-width: 0; }
+  .mapping-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .mapping-table .c-name { grid-column: 1 / -1; }
+  .mapping-table .c-from { grid-column: 1; }
+  .mapping-table .c-to { grid-column: 2; }
+  .mapping-table .c-more { display: block; grid-column: 1 / -1; grid-row: 3; }
+  .mapping-table .row-more {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    text-align: left;
+  }
+  .row-more-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .row-more-arrow { flex: none; }
+  .mapping-table .c-out { display: none; grid-column: 1 / -1; }
+  .mapping-table tr.open .c-out {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .mapping-table tr.open .c-out[data-label]::before { display: inline; margin: 0; flex: 0 0 auto; }
+  .mapping-table .c-out > select,
+  .mapping-table .c-out > input[type="number"],
+  .mapping-table .c-out > .trig-cell { width: 58%; flex: none; }
+  .mapping-table .c-out.c-chk { text-align: left; }
+  .mapping-table .c-out.c-chk input { width: 20px; height: 20px; }
+  .mapping-table .c-del .btn.tiny { width: 100%; }
+  .mapping-table input,
+  .mapping-table select { font-size: 15px; }  /* 15 px+ stops iPhone zooming into the field */
+  .mapping-table .hex-input { width: 40px; min-width: 36px; padding: 7px 5px; }
+  .mapping-table tr.latched { border-color: var(--ok); }
+  .mapping-table tr.live { border-color: var(--accent); box-shadow: 0 0 8px rgba(36, 209, 196, .3); }
+  .mapping-table tr.latched td,
+  .mapping-table tr.live td { background: none; box-shadow: none; }
 }

@@ -204,9 +204,28 @@ void logLine(const char* fmt, ...) {
   logWriteIndex++;
   portEXIT_CRITICAL(&logMux);
 
-  // Mirror to the serial monitor so the same lines show in the PlatformIO
-  // terminal, not just the web LIN Monitor page.
-  DEBUG("[LOG] %s", tmp);
+  // Mirror to the serial monitor (115200) so the same lines show in any serial
+  // terminal, not just the web LIN Monitor page. Up to V1.09 this went through
+  // DEBUG(), which is compiled out (enableDebug 0) — so a release build printed
+  // nothing at all over USB. Written as one pre-formatted block (no printf: the
+  // GRA task calls this on a 3 KB stack). Skipped while the SavvyCAN serial
+  // analyzer owns the port: text there would corrupt its binary GVRET stream.
+  if (!analyzerSerial) {
+    const size_t n = strlen(tmp);
+    char line[kLogLineLen + 8];
+    memcpy(line, "[LOG] ", 6);
+    memcpy(line + 6, tmp, n);
+    line[6 + n] = '\r';
+    line[7 + n] = '\n';
+    Serial.write(reinterpret_cast<const uint8_t*>(line), n + 8);
+  }
+}
+
+void clearLog() {
+  portENTER_CRITICAL(&logMux);
+  logWriteIndex = 0;
+  memset(logBuffer, 0, sizeof(logBuffer));
+  portEXIT_CRITICAL(&logMux);
 }
 
 volatile bool     analyzerMode               = false;
@@ -279,6 +298,49 @@ volatile uint8_t  mqbActByte3   = 0x00;
 
 volatile uint8_t  chassisProtocol = CHASSIS_PROTOCOL_PQ;
 
+CustomWheelConfig customWheel = {};
+
+// Defaults: a LIN 1.x wheel at 19200 answering one 8-byte frame 0x0E with its
+// code in byte 1 — i.e. "a VW-like wheel"; everything is meant to be changed.
+void resetCustomWheel() {
+  customWheel = {};
+  customWheel.version         = kCustomWheelVersion;
+  customWheel.baud            = 19200;
+  customWheel.checksum        = WHEEL_CHK_AUTO;
+  customWheel.decoder         = WHEEL_DEC_CODE_BYTE;
+  customWheel.codeByte        = 1;
+  customWheel.rollerByte      = 0xFF;
+  customWheel.btnId[0]        = linButtonID;
+  customWheel.btnId[1]        = 0xFF;
+  customWheel.btnLen[0]       = 0;
+  customWheel.btnLen[1]       = 0;
+  customWheel.lightId         = 0xFF;
+  customWheel.lightLen        = 4;
+  customWheel.lightBrightByte = 0xFF;
+  customWheel.lightBrightMax  = 0x7F;
+  customWheel.lightEveryMs    = 100;
+}
+
+// Clamp anything out of range (an edited export file, a corrupt blob).
+void sanitiseCustomWheel() {
+  CustomWheelConfig& c = customWheel;
+  if (c.baud != 9600 && c.baud != 10417 && c.baud != 19200) c.baud = 19200;
+  if (c.checksum > WHEEL_CHK_AUTO) c.checksum = WHEEL_CHK_AUTO;
+  if (c.decoder > WHEEL_DEC_BITS) c.decoder = WHEEL_DEC_CODE_BYTE;
+  if (c.codeByte > 7) c.codeByte = 1;
+  if (c.rollerByte > 7) c.rollerByte = 0xFF;
+  for (uint8_t i = 0; i < 2; i++) {
+    if (c.btnId[i] > 0x3B) c.btnId[i] = 0xFF;  // 0x3C-0x3F are diagnostic / reserved
+    if (c.btnLen[i] > 8) c.btnLen[i] = 0;
+  }
+  if (c.btnId[0] == 0xFF && c.btnId[1] != 0xFF) { c.btnId[0] = c.btnId[1]; c.btnLen[0] = c.btnLen[1]; c.btnId[1] = 0xFF; }
+  if (c.lightId > 0x3B) c.lightId = 0xFF;
+  if (c.lightLen < 1 || c.lightLen > 8) c.lightLen = 4;
+  if (c.lightBrightByte >= c.lightLen) c.lightBrightByte = 0xFF;
+  if (c.lightEveryMs < 100 || c.lightEveryMs > 2000) c.lightEveryMs = 100;
+  c.version = kCustomWheelVersion;
+}
+
 void loadPreferences() {
   size_t mapCount = preferences.getUInt("mapCount", buttonMappingCount);
   if (mapCount > kMaxButtonMappings) mapCount = kMaxButtonMappings;
@@ -331,7 +393,16 @@ void loadPreferences() {
   linRotaryByteIndex    = preferences.getUChar("linRotByte",  linRotaryByteIndex);
   if (linRotaryByteIndex > 8) linRotaryByteIndex = 8;  // 8 = rotary disabled
   wheelProtocol         = preferences.getUChar("wheelProto",  wheelProtocol);
-  if (wheelProtocol > WHEEL_PROTOCOL_MQB) wheelProtocol = WHEEL_PROTOCOL_PQ;
+  if (wheelProtocol > WHEEL_PROTOCOL_MAX) wheelProtocol = WHEEL_PROTOCOL_PQ;
+  resetCustomWheel();
+  if (preferences.isKey("custWheel") &&
+      preferences.getBytesLength("custWheel") == sizeof(customWheel)) {
+    preferences.getBytes("custWheel", &customWheel, sizeof(customWheel));
+    if (customWheel.version != kCustomWheelVersion) {
+      resetCustomWheel();  // layout changed: start from defaults rather than misread it
+    }
+  }
+  sanitiseCustomWheel();
   mqbActByte1           = preferences.getUChar("mqbAct1",     mqbActByte1);
   mqbActByte2           = preferences.getUChar("mqbAct2",     mqbActByte2);
   mqbActByte3           = preferences.getUChar("mqbAct3",     mqbActByte3);
@@ -384,6 +455,23 @@ void savePreferences() {
   preferences.putUChar("linBtnByte",   linButtonByteIndex);
   preferences.putUChar("linRotByte",   linRotaryByteIndex);
   preferences.putUChar("wheelProto",   wheelProtocol);
+  {
+    // Only write when changed: this runs every 5 s and NVS wear is real.
+    // Copied under stateMux: the web server writes it from another task.
+    // (savePreferences() runs from prefsTask and from API handlers, so the
+    // "last saved" copy is only an optimisation — a race just costs one write.)
+    static CustomWheelConfig saved = {};
+    static bool haveSaved = false;
+    CustomWheelConfig now;
+    portENTER_CRITICAL(&stateMux);
+    now = customWheel;
+    portEXIT_CRITICAL(&stateMux);
+    if (!haveSaved || memcmp(&saved, &now, sizeof(saved)) != 0) {
+      preferences.putBytes("custWheel", &now, sizeof(now));
+      saved = now;
+      haveSaved = true;
+    }
+  }
   preferences.putUChar("mqbAct1",      mqbActByte1);
   preferences.putUChar("mqbAct2",      mqbActByte2);
   preferences.putUChar("mqbAct3",      mqbActByte3);

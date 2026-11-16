@@ -14,7 +14,7 @@
 #include "ver.h"
 #include "board.h"   // MFSW_BOARD_DEVKIT / MFSW_BOARD_S3 (set by platformio.ini)
 
-#define FW_VERSION "1.09"
+#define FW_VERSION "1.12"
 
 #define enableDebug 0
 #define debugIO 0
@@ -96,6 +96,21 @@ constexpr uint8_t linLightID = 0x0D;
 constexpr uint8_t linButtonID = 0x0E;
 constexpr uint8_t linTemperatureID = 0x3A;
 constexpr uint8_t linAccButtonsID = 0x0F;
+// VAG LIN 1.3 wheels (WHEEL_PROTOCOL_AUDI): classic checksum, polled as master
+// at the same 19200 baud. Both frames are slave responses from the wheel.
+// Seen on: a customer's Audi A8 (16/11/2026); an Audi A4 2013 (forum.arduino.cc
+// thread 934599 — its dumps carry PIDs C1/61/F0 = IDs 0x01/0x21/0x30); and
+// early PQ35 Leon 1P / Octavia 2 wheels on a LIN-1.3 J527
+// (github.com/katzenberger/vag-mfsw-lin-bus-protocol).
+constexpr uint8_t audiButtonID  = 0x30;  // PID 0xF0, 6 data bytes: counter, button code, horn, rollers
+constexpr uint8_t audiButtonLen = 6;
+// PID 0x61, 2 data bytes. PQ35: byte 1 = button layout (22 Leon, 33 Octavia,
+// 03 right pod only, 30 left pod only, 00 none); A8 "23 01", A4 "64 01".
+constexpr uint8_t audiStatusID  = 0x21;
+constexpr uint8_t audiStatusLen = 2;
+// Master-published frame 0x01 (PID 0xC1, 2 bytes) that LIN 1.3 column modules
+// send in place of VW's 0x0D; see sendLightLINFrame().
+constexpr uint8_t kLin13MasterId = 0x01;
 constexpr uint16_t canButtonID = 0x1E0;
 constexpr uint32_t linBaud = 19200;
 constexpr uint32_t linPause = 100;

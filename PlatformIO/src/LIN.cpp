@@ -2,6 +2,7 @@
 
 #include "API.h"
 #include "globals.h"
+#include "io.h"
 
 static bool lockLinBus(SemaphoreHandle_t mutex)
 {
@@ -108,7 +109,8 @@ static const char* linErrorLabel(LIN_Master_Base::error_t err)
 // needed to independently recompute both checksum types. Doing that would
 // require either patching the vendored library (fragile — .pio/libdeps gets
 // regenerated) or a from-scratch raw-UART sniffer bypassing it entirely.
-static void logLinAttempt(uint8_t bus, uint8_t id, const uint8_t* data, uint8_t len, LIN_Master_Base::error_t err)
+static void logLinAttempt(uint8_t bus, uint8_t id, const uint8_t* data, uint8_t len, LIN_Master_Base::error_t err,
+                          bool classic = false)
 {
   char hex[3 * 8 + 1];
   size_t pos = 0;
@@ -125,7 +127,8 @@ static void logLinAttempt(uint8_t bus, uint8_t id, const uint8_t* data, uint8_t 
     hex[0] = '\0';
   }
 
-  logLine("%s 0x%02X v2 %s len=%u: %s", (bus == 2) ? "LIN2" : "LIN1", id, linErrorLabel(err), (unsigned)len, hex);
+  logLine("%s 0x%02X %s %s len=%u: %s", (bus == 2) ? "LIN2" : "LIN1", id, classic ? "v1" : "v2",
+          linErrorLabel(err), (unsigned)len, hex);
 }
 
 // Drain and log whatever raw bytes are still sitting in the UART's RX FIFO
@@ -227,6 +230,95 @@ static void logLinRawFrame(uint8_t bus, uint8_t id, LinMaster& lin, LIN_Master_B
   logLine("%s 0x%02X FULLBUF(brk,sync,pid,data..,chk) len=%u: %s", (bus == 2) ? "LIN2" : "LIN1", id, (unsigned)len, hex);
 }
 
+// ---------------------------------------------------------------------------
+// Poll health, logged in NORMAL mode too. Before V1.10 a normal-mode LIN
+// Monitor only ever showed frames that arrived intact and had changed, so a
+// wheel speaking another protocol (the Audi A8: different ID, length and
+// checksum) left it completely blank — exactly what "nothing connected" looks
+// like. Now each polled frame reports when it stops answering (with the reason
+// and whatever bytes did arrive), every 10 s while it stays down, and when it
+// comes back. Passthru logs every attempt itself, so this stays quiet there.
+// ---------------------------------------------------------------------------
+struct PollHealth
+{
+  uint8_t  id = 0xFF;
+  bool     failing = false;
+  uint32_t fails = 0;
+  uint32_t failSinceMs = 0;
+  uint32_t lastReportMs = 0;
+  LIN_Master_Base::error_t lastErr = LIN_Master_Base::NO_ERROR;
+};
+
+constexpr uint32_t kPollReportEveryMs = 10000;
+
+// Returns true when the caller should also log the raw bytes of this attempt
+// (logLinRawResidual / logLinRawFrame) — i.e. when a line was just written.
+// `remind`: repeat every 10 s while down. Only for the button frame — plenty
+// of wheels never answer the accessory / temperature frames at all, and a
+// reminder forever would fill the log; those report when they change.
+static bool notePollResult(PollHealth& h, uint8_t bus, uint8_t id, LIN_Master_Base::error_t err,
+                           bool remind = false)
+{
+  if (h.id != id)  // frame ID changed (protocol / setting): start over
+  {
+    h = PollHealth();
+    h.id = id;
+  }
+  if (passthruEnabled)
+  {
+    return false;
+  }
+
+  const uint32_t now = millis();
+  const char* busName = (bus == 2) ? "LIN2" : "LIN1";
+  if (err == LIN_Master_Base::NO_ERROR)
+  {
+    if (h.failing)
+    {
+      logLine("%s 0x%02X answering again (after %lu failed polls)", busName, id, (unsigned long)h.fails);
+    }
+    h.failing = false;
+    h.fails = 0;
+    return false;
+  }
+
+  h.fails++;
+  if (!h.failing || err != h.lastErr)
+  {
+    logLine("%s 0x%02X no valid answer (%s)", busName, id, linErrorLabel(err));
+    if (!h.failing) h.failSinceMs = now;
+    h.failing = true;
+    h.lastErr = err;
+    h.lastReportMs = now;
+    return true;
+  }
+  if (remind && now - h.lastReportMs >= kPollReportEveryMs)
+  {
+    logLine("%s 0x%02X still no valid answer (%s): %lu polls, %lus", busName, id, linErrorLabel(err),
+            (unsigned long)h.fails, (unsigned long)((now - h.failSinceMs) / 1000));
+    h.lastReportMs = now;
+    return true;
+  }
+  return false;
+}
+
+// One poll's result, logged per notePollResult(): the health line, then (when
+// it reported) the bytes that did arrive — stranded in the FIFO on a timeout,
+// or the full captured frame on a checksum error. Draining the FIFO is
+// harmless: the library flushes it before the next transaction anyway.
+template <typename LinMaster>
+static void reportPoll(PollHealth& h, uint8_t id, LinMaster& lin, HardwareSerial& port, LIN_Master_Base::error_t err,
+                       bool remind = false)
+{
+  if (notePollResult(h, 1, id, err, remind))
+  {
+    logLinRawResidual(1, id, port);
+    logLinRawFrame(1, id, lin, err);
+  }
+}
+
+static PollHealth healthButton, healthAcc, healthTemp, healthAudiStatus, healthLight;
+
 // The button-frame byte a mapping matches on. 0 (or out of range) means "use
 // the global default byte" — keeps pre-existing/hand-added rows on byte 1 while
 // Learn assigns paddles/horn their real byte (6/7).
@@ -299,7 +391,7 @@ static inline int8_t signedNibble(uint8_t v)
 // have NOT been tested against a chassis of the opposite family.
 static void shapeFrameForChassis(uint8_t* frame)
 {
-  const bool wheelIsPq   = (wheelProtocol == WHEEL_PROTOCOL_PQ);
+  const bool wheelIsPq   = wheelIsPqFamily();  // PQ and NSF (Up!) send a PQ frame
   const bool chassisIsPq = (chassisProtocol == CHASSIS_PROTOCOL_PQ);
   if (wheelIsPq == chassisIsPq)
   {
@@ -435,6 +527,19 @@ static void captureLearnedFromFrame(const uint8_t* frame)
     return;
   }
 
+  // A byte that returns to 0 is at rest, whatever the baseline said: if Learn
+  // was armed while a button was still held, that held code became the
+  // baseline, the frame never "agreed" with it again after release, and no
+  // later press on that byte could ever be captured. (Bytes resting at a
+  // non-zero constant — PQ FF/42/30, MQB 31 — never read 0, so are untouched.)
+  for (uint8_t i = 1; i < 8; i++)
+  {
+    if (frame[i] == 0 && learnBaseline[i] != 0)
+    {
+      learnBaseline[i] = 0;
+    }
+  }
+
   if (havePrev)
   {
     for (uint8_t i = 1; i < 8; i++)
@@ -484,6 +589,327 @@ static uint8_t calculateEnhancedChecksum(uint8_t pid, const uint8_t* data, uint8
     }
   }
   return (uint8_t)(0xFF - (uint8_t)chk);
+}
+
+static uint8_t calculateClassicChecksum(const uint8_t* data, uint8_t numData)
+{
+  uint16_t chk = 0;
+  for (uint8_t i = 0; i < numData; i++)
+  {
+    chk += data[i];
+    if (chk > 255)
+    {
+      chk -= 255;
+    }
+  }
+  return (uint8_t)(0xFF - (uint8_t)chk);
+}
+
+// For a frame body d[0..n-1] followed by its checksum d[n]: 1 = classic
+// valid, 2 = enhanced valid, 0 = neither. (A frame valid under both — only
+// possible by coincidence — reports enhanced.)
+static uint8_t checksumKind(uint8_t pid, const uint8_t* d, uint8_t n)
+{
+  if (calculateEnhancedChecksum(pid, d, n) == d[n]) return 2;
+  if (calculateClassicChecksum(d, n) == d[n]) return 1;
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// LIN1 wheel detect / ID scan — the "LIN scanner" a customer had to write for
+// himself to find out his A8 wheel answers 0x30, built in. Every ID 0x00-0x3B
+// is asked for a slave response; anything that answers is reported with its
+// real length and checksum type, whichever it is:
+//   * answered 8 bytes, enhanced  -> the library accepts it outright;
+//   * answered 8 bytes, classic   -> CHK error, full frame in getRawRxBuffer();
+//   * answered fewer bytes        -> TIMEOUT, bytes stranded in the UART FIFO
+//                                    (after our own break/sync/PID echo).
+// Runs by itself when the button frame has had no valid answer for 5 s (at
+// most once a minute — nothing is working at that point anyway, so the 1-3 s
+// the scan blocks LIN1 costs nothing), or on request from the UI.
+// ---------------------------------------------------------------------------
+LinScanHit         linScanHits[kLinScanMaxHits] = {};
+volatile uint8_t   linScanHitCount = 0;
+volatile uint32_t  linScanSeq = 0;
+volatile uint32_t  linScanMs = 0;
+volatile uint8_t   linScanSuggest = LIN_SCAN_NONE;
+
+static volatile bool linScanRequested = false;
+static uint32_t buttonLastOkMs = 0;
+static uint32_t buttonFailSinceMs = 0;
+
+void requestLinScan()
+{
+  linScanRequested = true;
+}
+
+static void noteButtonFrameResult(bool ok)
+{
+  const uint32_t now = millis();
+  if (ok)
+  {
+    buttonLastOkMs = now;
+    buttonFailSinceMs = 0;
+  }
+  else if (buttonFailSinceMs == 0)
+  {
+    buttonFailSinceMs = now | 1U;
+  }
+}
+
+static const char* linScanSuggestLabel(uint8_t s)
+{
+  switch (s)
+  {
+  case WHEEL_PROTOCOL_PQ:       return "PQ wheel (0x0E)";
+  case WHEEL_PROTOCOL_MQB:      return "MQB wheel (0x0E)";
+  case WHEEL_PROTOCOL_AUDI:     return "VAG LIN 1.3 wheel (0x30: Audi / early PQ35)";
+  case WHEEL_PROTOCOL_NSF:      return "VW Up! / Citigo / Mii wheel (0x0E + 0x0C)";
+  case WHEEL_PROTOCOL_VOLVO_P1: return "Volvo P1 wheel (0x20 at 9600)";
+  case WHEEL_PROTOCOL_VOLVO_P3: return "Volvo P3 wheel (0x30 / 0x20 at 9600)";
+  case LIN_SCAN_NOTHING:        return "nothing answered";
+  default:                      return "unknown wheel";
+  }
+}
+
+static const LinScanHit* findHit(const LinScanHit* hits, uint8_t n, uint8_t id, uint16_t baud)
+{
+  for (uint8_t i = 0; i < n; i++)
+  {
+    if (hits[i].id == id && hits[i].baud == baud) return &hits[i];
+  }
+  return nullptr;
+}
+
+// Recognise a wheel from what answered. Only signatures seen on real wheels
+// (or in published code for them — docs/wheel-protocol-research.md).
+static uint8_t classifyLinScan(const LinScanHit* hits, uint8_t n)
+{
+  if (n == 0) return LIN_SCAN_NOTHING;
+
+  const LinScanHit* vw = findHit(hits, n, linButtonID, 19200);
+  if (vw && vw->len == 8 && !vw->classic)
+  {
+    // Up!/Citigo/Mii wheels also answer 0x0C (4 bytes; riquenunes/vw-steering-wheel-gamepad).
+    const LinScanHit* nsf = findHit(hits, n, 0x0C, 19200);
+    if (nsf && nsf->len == 4) return WHEEL_PROTOCOL_NSF;
+    // Idle constants differ: PQ bytes 2/4/6 = FF/42/30, MQB 00/31/00.
+    if (vw->data[2] == 0xFF || vw->data[4] == 0x42) return WHEEL_PROTOCOL_PQ;
+    if (vw->data[4] == 0x31) return WHEEL_PROTOCOL_MQB;
+    return (wheelProtocol == WHEEL_PROTOCOL_MQB) ? WHEEL_PROTOCOL_MQB : WHEEL_PROTOCOL_PQ;
+  }
+  const LinScanHit* lin13 = findHit(hits, n, audiButtonID, 19200);
+  if (lin13 && lin13->len == audiButtonLen && lin13->classic)
+  {
+    return WHEEL_PROTOCOL_AUDI;
+  }
+  // Volvo runs its wheel bus at 9600: P3 answers 0x30 (left) and 0x20
+  // (right), P1 only 0x20 with 4 bytes.
+  if (findHit(hits, n, 0x30, 9600)) return WHEEL_PROTOCOL_VOLVO_P3;
+  const LinScanHit* p1 = findHit(hits, n, 0x20, 9600);
+  if (p1 && p1->len == 4) return WHEEL_PROTOCOL_VOLVO_P1;
+  return LIN_SCAN_UNKNOWN;
+}
+
+// Ask `id` for a slave response whose length and checksum type are not known,
+// and work both out from the bytes. Caller holds steeringWheelLinMutex.
+//   * answered 8 bytes, enhanced -> the library accepts it outright;
+//   * answered 8 bytes, classic  -> CHK error, full frame in getRawRxBuffer();
+//   * answered fewer bytes       -> TIMEOUT, bytes stranded in the UART FIFO
+//                                   (after the echo of our own break/sync/PID).
+// Returns the data length found (0: no valid answer); `err` is the library's.
+static uint8_t probeSlaveResponse(uint8_t id, uint8_t* data, bool& classic, LIN_Master_Base::error_t& err)
+{
+  uint8_t buf[8] = {};
+  steeringWheelLIN.resetStateMachine();
+  steeringWheelLIN.resetError();
+  steeringWheelLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, id, 8, buf);
+  err = steeringWheelLIN.getError();
+  const uint8_t pid = calculateProtectedId(id);
+  classic = false;
+
+  if (err == LIN_Master_Base::NO_ERROR)
+  {
+    memcpy(data, buf, 8);
+    return 8;
+  }
+  if (!(err & LIN_Master_Base::ERROR_TIMEOUT))
+  {
+    uint8_t rawLen = 0;
+    const uint8_t* raw = steeringWheelLIN.getRawRxBuffer(rawLen);  // brk sync pid d0..d7 chk
+    if (rawLen >= 12 && checksumKind(pid, raw + 3, 8) == 1)
+    {
+      classic = true;
+      memcpy(data, raw + 3, 8);
+      return 8;
+    }
+    return 0;
+  }
+
+  uint8_t r[16];
+  uint8_t rn = 0;
+  while (Serial1.available() && rn < sizeof(r))
+  {
+    r[rn++] = (uint8_t)Serial1.read();
+  }
+  for (uint8_t p = 1; p < rn; p++)
+  {
+    if (r[p - 1] != 0x55 || r[p] != pid) continue;
+    const uint8_t* d = r + p + 1;
+    const uint8_t m = (uint8_t)(rn - p - 1);  // response bytes incl. checksum
+    for (int8_t k = (int8_t)((m > 9 ? 9 : m) - 1); k >= 1; k--)
+    {
+      const uint8_t kind = checksumKind(pid, d, (uint8_t)k);
+      if (kind)
+      {
+        classic = (kind == 1);
+        memcpy(data, d, (size_t)k);
+        return (uint8_t)k;
+      }
+    }
+    break;
+  }
+  return 0;
+}
+
+// LIN1 speed. VW / Audi wheels run 19200, Volvo 9600, GM reportedly 10417. The
+// library re-applies its own rate on every transaction (setBaudrate() patch),
+// so changing it is cheap. Caller holds steeringWheelLinMutex.
+static uint16_t wheelLinBaudNow = linBaud;
+static void setWheelLinBaud(uint16_t baud)
+{
+  if (baud == wheelLinBaudNow) return;
+  wheelLinBaudNow = baud;
+  steeringWheelLIN.setBaudrate(baud);
+  Serial1.updateBaudRate(baud);
+}
+
+uint16_t profileWheelBaud();  // wheel-profile section below
+
+static void runLinScan(bool manual)
+{
+  if (wheelProtocol == WHEEL_PROTOCOL_BMW_KBUS)
+  {
+    // The K-bus has no master to ask with: the wheel only ever talks first.
+    if (manual) logLine("[SCAN] not available with the BMW K-bus profile (the wheel sends unprompted)");
+    return;
+  }
+
+  LinScanHit hits[kLinScanMaxHits] = {};
+  uint8_t n = 0;
+
+  // 19200 first (every VW-group wheel), 9600 only if nothing answered there.
+  static const uint16_t kScanBauds[] = {19200, 9600};
+  for (uint16_t baud : kScanBauds)
+  {
+    if (n > 0) break;
+    for (uint8_t id = 0x00; id <= 0x3B && n < kLinScanMaxHits; id++)
+    {
+      if (wheelProtocol == WHEEL_PROTOCOL_BMW_KBUS)
+      {
+        break;  // switched to the K-bus mid-scan: stop transmitting at once
+      }
+      if (!lockLinBus(steeringWheelLinMutex))
+      {
+        continue;
+      }
+      setWheelLinBaud(baud);
+      LinScanHit h = {};
+      h.id = id;
+      h.baud = baud;
+      LIN_Master_Base::error_t err;
+      h.len = probeSlaveResponse(id, h.data, h.classic, err);
+      unlockLinBus(steeringWheelLinMutex);
+
+      if (h.len)
+      {
+        hits[n++] = h;
+      }
+      vTaskDelay(1);  // let the other tasks on this core breathe between IDs
+    }
+  }
+  if (lockLinBus(steeringWheelLinMutex))
+  {
+    setWheelLinBaud(profileWheelBaud());  // back to the profile's own speed
+    unlockLinBus(steeringWheelLinMutex);
+  }
+
+  const uint8_t suggest = classifyLinScan(hits, n);
+
+  // Same IDs/lengths/checksums as last time and not asked for: say nothing —
+  // an unplugged wheel would otherwise log "nothing answered" every minute.
+  static uint32_t lastSig = 0;
+  uint32_t sig = 2166136261UL;
+  for (uint8_t i = 0; i < n; i++)
+  {
+    sig = (sig ^ hits[i].id) * 16777619UL;
+    sig = (sig ^ (uint32_t)(hits[i].len | (hits[i].classic ? 0x80 : 0))) * 16777619UL;
+    sig = (sig ^ hits[i].baud) * 16777619UL;
+  }
+  const bool changed = (linScanSeq == 0) || sig != lastSig;
+  lastSig = sig;
+
+  portENTER_CRITICAL(&stateMux);
+  memcpy(linScanHits, hits, sizeof(linScanHits));
+  linScanHitCount = n;
+  linScanSuggest = suggest;
+  linScanMs = millis();
+  linScanSeq++;
+  portEXIT_CRITICAL(&stateMux);
+
+  if (!manual && !changed)
+  {
+    return;
+  }
+  logLine("[SCAN] LIN1 %s scan: %u ID(s) answered", manual ? "manual" : "auto", (unsigned)n);
+  for (uint8_t i = 0; i < n; i++)
+  {
+    char hex[3 * 8 + 1];
+    size_t pos = 0;
+    for (uint8_t b = 0; b < hits[i].len; b++)
+    {
+      pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", hits[i].data[b]);
+    }
+    hex[pos ? pos - 1 : 0] = '\0';
+    logLine("[SCAN] 0x%02X %u bytes %s @%u: %s", hits[i].id, (unsigned)hits[i].len,
+            hits[i].classic ? "classic" : "enhanced", (unsigned)hits[i].baud, hex);
+  }
+  if (suggest == LIN_SCAN_NOTHING)
+  {
+    logLine("[SCAN] nothing answered at 19200 or 9600: check wheel power/ground, the LIN wire, and Setup > Legacy PCB");
+  }
+  else if (suggest == LIN_SCAN_UNKNOWN)
+  {
+    logLine("[SCAN] unknown wheel: please Export (CSV) this log and send it to Forbes Automotive");
+  }
+  else
+  {
+    logLine("[SCAN] looks like: %s%s", linScanSuggestLabel(suggest),
+            suggest == wheelProtocol ? "" : " - not the selected Wheel Protocol");
+  }
+}
+
+void serviceLinScan()
+{
+  const uint32_t now = millis();
+  if (linScanRequested)
+  {
+    linScanRequested = false;
+    runLinScan(true);
+    return;
+  }
+  static uint32_t lastAutoMs = 0;
+  if (passthruEnabled || wheelProtocol == WHEEL_PROTOCOL_BMW_KBUS ||
+      buttonFailSinceMs == 0 || now - buttonFailSinceMs < 5000)
+  {
+    return;
+  }
+  if (lastAutoMs != 0 && now - lastAutoMs < 60000)
+  {
+    return;
+  }
+  lastAutoMs = now | 1U;
+  runLinScan(false);
 }
 
 // Block (briefly) for exactly `n` more bytes on Serial2, for use immediately
@@ -560,14 +986,173 @@ static uint8_t chassisResponseFrame[8] = {};
 // device's normal ~100 ms LIN1 poll cadence. Must never call
 // receiveSlaveResponseBlocking() or sendMasterRequestBlocking() for the light
 // ID (both send a break+header first, competing with the BCM's own).
+// ---------------------------------------------------------------------------
+// LIN2 capture of every frame this device does NOT handle itself, in normal
+// mode too: whatever the car's master publishes on the wheel's bus (backlight,
+// heated-wheel status, wake, other slaves' answers) lands in the LIN Monitor
+// with its real length and checksum type. This is how an unknown car's
+// backlight frame gets found: plug LIN2 into the car's wheel wire and read it
+// off the log — no knowledge of the car needed in advance.
+//
+// Collected without blocking: after an unhandled header, following bytes are
+// gathered until the bus goes quiet (2.5 ms) or the next header starts, then
+// the longest body whose last byte is a valid checksum (classic or enhanced)
+// is taken as the frame. Logged on first sight and when it changes. A byte that
+// changes on every frame (a counter or CRC) is left out of "has it changed"
+// after 4 changes in a row, so counters don't flood the 200-line log; anything
+// else (brightness turning) still shows. At most one line per ID per 250 ms.
+// ---------------------------------------------------------------------------
+struct Lin2FrameLog
+{
+  uint8_t  last[8];
+  uint8_t  logged[8];
+  uint8_t  streak[8];
+  uint8_t  loggedLen;
+  bool     seen;
+  bool     silentLogged;
+  uint32_t logMs;
+  uint32_t badMs;
+};
+static Lin2FrameLog lin2Log[0x40] = {};
+
+static void logFrameOnChange(Lin2FrameLog& s, uint8_t bus, uint8_t id, const uint8_t* buf, uint8_t len, bool classic);
+
+static void recordLin2Frame(uint8_t pid, const uint8_t* buf, uint8_t n)
+{
+  const uint8_t id = (uint8_t)(pid & 0x3F);
+  Lin2FrameLog& s = lin2Log[id];
+  const uint32_t now = millis();
+
+  if (n == 0)
+  {
+    // The car asked, nobody here answered (e.g. it polls a wheel that isn't
+    // on this wire). Worth knowing once: it names the frame the car expects.
+    if (!s.silentLogged)
+    {
+      s.silentLogged = true;
+      logLine("LIN2 0x%02X header from the car, no answer on this bus", id);
+    }
+    return;
+  }
+
+  uint8_t len = 0;
+  uint8_t kind = 0;
+  for (int8_t k = (int8_t)((n > 9 ? 9 : n) - 1); k >= 1; k--)
+  {
+    kind = checksumKind(pid, buf, (uint8_t)k);
+    if (kind)
+    {
+      len = (uint8_t)k;
+      break;
+    }
+  }
+
+  if (!len)
+  {
+    if (s.badMs == 0 || now - s.badMs >= 10000)
+    {
+      char hex[3 * 10 + 1];
+      size_t pos = 0;
+      for (uint8_t i = 0; i < n && i < 10; i++)
+      {
+        pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", buf[i]);
+      }
+      hex[pos ? pos - 1 : 0] = '\0';
+      s.badMs = now | 1U;
+      logLine("LIN2 0x%02X %u bytes, no valid checksum: %s", id, (unsigned)n, hex);
+    }
+    return;
+  }
+
+  logFrameOnChange(s, 2, id, buf, len, kind == 1);
+}
+
+// The change-detection half of recordLin2Frame(), shared with the wheel
+// profiles' LIN1 frames: log on first sight and on change; a byte that changes
+// on every frame (counter, CRC) stops counting after 4 changes in a row; at
+// most one line per ID per 250 ms.
+static void logFrameOnChange(Lin2FrameLog& s, uint8_t bus, uint8_t id, const uint8_t* buf, uint8_t len, bool classic)
+{
+  const uint32_t now = millis();
+  char hex[3 * 8 + 1];
+  size_t pos = 0;
+  for (uint8_t i = 0; i < len && i < 8; i++)
+  {
+    pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", buf[i]);
+  }
+  hex[pos ? pos - 1 : 0] = '\0';
+
+  bool differ = !s.seen || len != s.loggedLen;
+  for (uint8_t i = 0; i < len; i++)
+  {
+    if (s.seen && buf[i] != s.last[i])
+    {
+      if (s.streak[i] < 255) s.streak[i]++;
+    }
+    else
+    {
+      s.streak[i] = 0;
+    }
+    if (s.streak[i] < 4 && buf[i] != s.logged[i])
+    {
+      differ = true;
+    }
+  }
+  memcpy(s.last, buf, len);
+  if (!differ || (s.seen && now - s.logMs < 250))
+  {
+    s.seen = true;
+    return;  // unchanged, or too soon: a change still differs from `logged` next frame
+  }
+  s.seen = true;
+  memcpy(s.logged, buf, len);
+  s.loggedLen = len;
+  s.logMs = now;
+  logLine("%s 0x%02X: %s (%u bytes, %s)", bus == 2 ? "LIN2" : "LIN1", id, hex, (unsigned)len,
+          classic ? "classic" : "enhanced");
+}
+
 void serviceChassisLinBus()
 {
   static uint8_t window[2] = {};  // rolling SYNC, PID
   static uint8_t windowLen = 0;
+  static uint8_t beforeWindow = 0xFF;  // byte just ahead of the window (a header's BREAK reads 0x00)
+
+  // Unhandled frame being collected (see recordLin2Frame()).
+  static uint8_t  unkPid = 0;
+  static bool     unkActive = false;
+  static uint8_t  unkBuf[12];
+  static uint8_t  unkLen = 0;
+  static uint32_t unkLastUs = 0;
+
+  // A finished unhandled frame waits here and is logged only once the RX FIFO
+  // is drained (end of this call): logLine() also writes to the serial console,
+  // which can block for milliseconds — never before answering the BCM.
+  static uint8_t pendPid = 0;
+  static uint8_t pendBuf[12];
+  static uint8_t pendLen = 0;
+  static bool    pendReady = false;
+  auto stashUnknown = [&](uint8_t n) {
+    if (pendReady)
+    {
+      recordLin2Frame(pendPid, pendBuf, pendLen);  // two in one pass: rare; the older one goes now
+    }
+    pendPid = unkPid;
+    pendLen = n;
+    memcpy(pendBuf, unkBuf, n);
+    pendReady = true;
+  };
 
   if (!lockLinBus(chassisLinMutex))
   {
     return;  // bus busy with a normal-mode master transaction; try next pass
+  }
+
+  // Bus quiet since the last byte: the unhandled frame is complete.
+  if (unkActive && (uint32_t)(micros() - unkLastUs) > 2500)
+  {
+    unkActive = false;
+    stashUnknown(unkLen);
   }
 
   const uint8_t lightPid = calculateProtectedId(linLightInId);
@@ -577,12 +1162,19 @@ void serviceChassisLinBus()
   {
     const uint8_t b = (uint8_t)Serial2.read();
 
+    if (unkActive)
+    {
+      if (unkLen < sizeof(unkBuf)) unkBuf[unkLen++] = b;
+      unkLastUs = micros();
+    }
+
     if (windowLen < sizeof(window))
     {
       window[windowLen++] = b;
     }
     else
     {
+      beforeWindow = window[0];
       window[0] = window[1];
       window[1] = b;
     }
@@ -596,6 +1188,30 @@ void serviceChassisLinBus()
       continue;
     }
     const uint8_t pid = window[1];
+    const bool known = (pid == lightPid) || (pid == buttonPid);
+    // Only a real header ends or starts an unhandled frame: valid parity and
+    // a BREAK (read as 0x00) just ahead of the SYNC. A 0x55 inside some other
+    // frame's data must not cut that frame short.
+    // (The BREAK is only insisted on while collecting, in case a UART ever
+    // swallows it: then unhandled frames are still captured, just less safely.)
+    // While collecting, that goes for our own light / button IDs too: a 0x55
+    // followed by the button PID inside another frame's data would otherwise
+    // be answered mid-frame and collide on the bus.
+    const bool realHeader = (calculateProtectedId(pid) == pid) && (beforeWindow == 0x00 || !unkActive);
+    if (!realHeader && (!known || unkActive))
+    {
+      continue;
+    }
+
+    if (unkActive)
+    {
+      // The next frame's BREAK / SYNC / PID were collected as well: drop them.
+      uint8_t n = unkLen;
+      n = (n >= 2) ? (uint8_t)(n - 2) : 0;
+      if (n > 0 && beforeWindow == 0x00 && unkBuf[n - 1] == 0x00) n--;
+      unkActive = false;
+      stashUnknown(n);
+    }
 
     if (pid == buttonPid && (passthruEnabled || linOutputEnabled))
     {
@@ -675,23 +1291,22 @@ void serviceChassisLinBus()
       continue;
     }
 
-    if (passthruEnabled)
-    {
-      // Some other ID's header — not one of ours. Log each distinct ID only
-      // ONCE (the log ring buffer is just 200 entries — a busy chassis bus
-      // can carry dozens of unrelated frames per second, which would drown
-      // the button/light entries we actually care about within a second or
-      // two). This still answers "does the BCM even schedule 0x0E here, and
-      // what else shares this bus" without flooding.
-      static uint64_t seenIds = 0;
-      const uint8_t id = pid & 0x3F;
-      const uint64_t bit = (uint64_t)1 << id;
-      if (!(seenIds & bit))
-      {
-        seenIds |= bit;
-        logLine("LIN2 0x%02X header seen (unhandled, first time)", (unsigned)id);
-      }
-    }
+    // Some other ID's header — not one of ours (or our button ID while
+    // nothing is set to answer it). Collect whatever follows and log it via
+    // recordLin2Frame(): first sight, then changes only, so a busy chassis
+    // bus can't drown the button/light entries in the 200-line log. (Up to
+    // V1.09 this was a once-per-ID "header seen" line in passthru only,
+    // without the data.)
+    unkPid = pid;
+    unkActive = true;
+    unkLen = 0;
+    unkLastUs = micros();
+  }
+
+  if (pendReady)
+  {
+    pendReady = false;
+    recordLin2Frame(pendPid, pendBuf, pendLen);
   }
 
   unlockLinBus(chassisLinMutex);
@@ -776,7 +1391,7 @@ static int8_t computeRotaryDelta(const uint8_t* frame, bool frameValid)
     return 0;
   }
 
-  if (wheelProtocol == WHEEL_PROTOCOL_PQ)
+  if (wheelIsPqFamily())
   {
     const uint8_t pos = (uint8_t)(frame[idx] & 0x0F);
     const int8_t  d   = havePos ? signedNibble((uint8_t)(pos - lastPos)) : 0;
@@ -844,6 +1459,876 @@ static int pressedMappingIndex(const uint8_t* frame)
   return -1;
 }
 
+// ---------------------------------------------------------------------------
+// VAG LIN 1.3 wheel (WHEEL_PROTOCOL_AUDI): classic checksum, frame 0x30 of 6
+// data bytes — a different frame from LIN 2.x VW's 0x0E. Not Audi-only: the
+// same frames come from early PQ35 VW-group wheels. What the captures show:
+//
+//   customer A8 (16/11/2026)  idle  02 10 00 00 00 3F
+//                             only change seen: d4 = 10/20/30/40/60, back to 00
+//   Audi A4 2013 (Arduino forum thread 934599)  idle FB B0 00 34 00 FF
+//                             d2 = 08 mute, 04 voice, 80 select press, 01 mode
+//                             d4 = 10 / F0 vol up/down, 01 / 0F selector up/down
+//   Leon 1P 1P0959542 / Octavia 2 3C0959542 on J527 1K0953549BP
+//   (github.com/katzenberger/vag-mfsw-lin-bus-protocol, Saleae captures)
+//                             idle 02 20 00 00 00 00
+//                             d2 = button CODE: Leon 1E 2A 1D 01 02 06 03 07,
+//                                  Octavia 04 2B 05 50 02 06 03 07 (the same
+//                                  codes the car puts on radio CAN 0x5C1);
+//                                  two buttons at once = 00
+//                             d3 bit 0x04 = horn
+//                             d1 = 80 10 20 30 4A 5A 60 70 with the counter
+//
+//   d0 low nibble, d1          counter-driven, never a button (d1's low nibble
+//                              toggles with the counter on PQ35)
+//   d2                         the wheel's own button code, 0 at rest
+//   d3, d5, d0 high nibble     constant per wheel at rest (A8 00/3F/0, A4
+//                              34/FF/F, PQ35 00/00/0); the horn is in d3
+//   d4                         two signed 4-bit roller movements
+//
+// Decoded into an MQB-shaped frame so Learn, rollers, trigger filters and
+// chassis shaping all work on it unchanged:
+//
+//   byte 0  0x80 | counter
+//   byte 1  d2 — the wheel's own code; or 0xF1 / 0xF2 while the d4 high / low
+//           roller moves (a roller has no code of its own in this frame)
+//   byte 2  bits of d0's high nibble that differ from rest
+//   byte 3  roller movement (signed nibble), else press stage
+//   byte 4  0x31
+//   byte 5  bits of d5 that differ from rest
+//   byte 7  bits of d3 that differ from rest (PQ35 horn: 0x04), like VW's horn byte
+//
+// Bytes 2/5/7 are learned like paddles/horn are on a VW wheel (Learn records
+// the byte it came from). Which A8 control is which is NOT known — the capture
+// carries no annotations — so nothing here names one.
+// ---------------------------------------------------------------------------
+constexpr uint8_t kLin13CodeRollerHi = 0xF1;
+constexpr uint8_t kLin13CodeRollerLo = 0xF2;
+// "Pressed" for d0/d3/d5 means "differs from rest", rest taken from the first
+// good frame. A bit that stays changed this long is the real resting state
+// (e.g. a button held at power-up).
+constexpr uint32_t kLin13RestRelearnMs = 30000;
+
+static void decodeAudiFrame(const uint8_t* raw, uint8_t* out)
+{
+  static uint8_t  rest[3]        = {};  // d0 high nibble, d3, d5
+  static bool     haveRest       = false;
+  static uint32_t differSince[3] = {};
+  static uint8_t  lastCode       = 0;
+  static uint32_t pressStartMs   = 0;
+
+  const uint32_t now = millis();
+  const uint8_t cur[3] = {(uint8_t)(raw[0] & 0xF0), raw[3], raw[5]};
+  if (!haveRest)
+  {
+    memcpy(rest, cur, sizeof(rest));
+    haveRest = true;
+  }
+  for (uint8_t i = 0; i < 3; i++)
+  {
+    if (cur[i] == rest[i])
+    {
+      differSince[i] = 0;
+    }
+    else if (differSince[i] == 0)
+    {
+      differSince[i] = now | 1U;  // never 0 while timing
+    }
+    else if (now - differSince[i] >= kLin13RestRelearnMs)
+    {
+      static const uint8_t kRestByte[3] = {0, 3, 5};
+      logLine("[SW] LIN 1.3 wheel: byte %u rest %02X -> %02X", (unsigned)kRestByte[i], rest[i], cur[i]);
+      rest[i] = cur[i];
+      differSince[i] = 0;
+    }
+  }
+
+  const int8_t rollHi = signedNibble((uint8_t)(raw[4] >> 4));
+  const int8_t rollLo = signedNibble(raw[4]);
+
+  uint8_t code = raw[2];
+  int8_t  move = 0;
+  if (rollHi != 0)      { code = kLin13CodeRollerHi; move = rollHi; }
+  else if (rollLo != 0) { code = kLin13CodeRollerLo; move = rollLo; }
+
+  // A roller code is one by construction — mark it so the UI treats it as a
+  // scroll wheel from its first detent, whichever way it was turned.
+  if (move != 0 && markRollerCode(code))
+  {
+    logLine("[SW] code 0x%02X is a scroll wheel (0x30 byte 4 %s nibble)", code,
+            code == kLin13CodeRollerHi ? "high" : "low");
+  }
+
+  // Press stage, in the MQB wheel's own steps (1 on press, then 4 / 5 / 6 at
+  // ~0.8 / 2 / 3 s held — see FLAG_PRESS_LONG), so long-press rows work. The
+  // A4 thread reports no long-press difference in the frame itself.
+  uint8_t stage = 0;
+  if (code != 0 && move == 0)
+  {
+    if (code != lastCode) pressStartMs = now;
+    const uint32_t held = now - pressStartMs;
+    stage = held < 800 ? 1 : held < 2000 ? 4 : held < 3000 ? 5 : 6;
+  }
+  lastCode = code;
+
+  memset(out, 0, 8);
+  out[0] = (uint8_t)(0x80 | (raw[0] & 0x0F));
+  out[2] = (uint8_t)((cur[0] ^ rest[0]) >> 4);
+  out[4] = 0x31;
+  out[5] = (uint8_t)(cur[2] ^ rest[2]);
+  out[7] = (uint8_t)(cur[1] ^ rest[1]);
+  const uint8_t bi = (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
+  out[bi] = code;
+  if (linRotaryByteIndex < 8 && linRotaryByteIndex != bi)
+  {
+    out[linRotaryByteIndex] = (move != 0) ? (uint8_t)(move & 0x0F) : stage;
+  }
+}
+
+// LIN Monitor line for the raw Audi frame: on a change outside the counter
+// nibbles, and on every poll while a roller is moving (two polls that each
+// say "+1" are two detents and must both appear).
+static void logAudiFrameIfChanged(const uint8_t* raw)
+{
+  static uint8_t last[audiButtonLen] = {};
+  static bool    seen = false;
+
+  uint8_t masked[audiButtonLen];
+  memcpy(masked, raw, sizeof(masked));
+  masked[0] &= 0xF0;
+  masked[1] = 0;  // counter-driven throughout (PQ35: low nibble toggles 0/A with it)
+  if (seen && raw[4] == 0 && memcmp(last, masked, sizeof(masked)) == 0)
+  {
+    return;
+  }
+  memcpy(last, masked, sizeof(last));
+  seen = true;
+
+  char hex[3 * audiButtonLen + 1];
+  size_t pos = 0;
+  for (uint8_t i = 0; i < audiButtonLen; i++)
+  {
+    pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", raw[i]);
+  }
+  hex[pos - 1] = '\0';
+  logLine("LIN1 0x%02X: %s", audiButtonID, hex);
+}
+
+// Audi frame 0x21 (2 bytes, meaning unknown): polled ~1 s for the LIN Monitor
+// only, logged on change, so a capture shows whether any control moves it.
+void getAudiStatusState()
+{
+  uint8_t buf[audiStatusLen] = {0};
+
+  if (!lockLinBus(steeringWheelLinMutex))
+  {
+    return;
+  }
+
+  steeringWheelLIN.resetStateMachine();
+  steeringWheelLIN.resetError();
+  steeringWheelLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V1, audiStatusID, sizeof(buf), buf);
+  const LIN_Master_Base::error_t linErr = steeringWheelLIN.getError();
+
+  if (passthruEnabled)
+  {
+    logLinAttempt(1, audiStatusID, buf, sizeof(buf), linErr, true);
+    logLinRawResidual(1, audiStatusID, Serial1);
+    logLinRawFrame(1, audiStatusID, steeringWheelLIN, linErr);
+  }
+  reportPoll(healthAudiStatus, audiStatusID, steeringWheelLIN, Serial1, linErr);
+
+  unlockLinBus(steeringWheelLinMutex);
+
+  if (linErr != LIN_Master_Base::NO_ERROR)
+  {
+    return;
+  }
+  swLinLastOkMs = millis();
+
+  static uint8_t last[audiStatusLen] = {};
+  static bool    seen = false;
+  if (!passthruEnabled && (!seen || memcmp(last, buf, sizeof(buf)) != 0))
+  {
+    memcpy(last, buf, sizeof(last));
+    seen = true;
+    logLine("LIN1 0x%02X: %02X %02X", audiStatusID, buf[0], buf[1]);
+  }
+}
+
+// ===========================================================================
+// Wheel profiles (V1.12). PQ / MQB / NSF use VW's own LIN 2.x frames and VAG
+// LIN 1.3 its 0x30 decoder (above). The rest go through two generic paths:
+//
+//   * LIN, any speed / checksum / frame: Volvo P1, Volvo P3 and Custom. Up to
+//     two button frames are polled — length taken from the profile, or worked
+//     out from the answer (probeSlaveResponse()) and remembered — decoded by
+//     a code byte (VW-style) or one-bit-per-button, into the same MQB-shaped
+//     frame the LIN 1.3 decoder builds. An optional master frame is sent to
+//     the wheel (backlight / wake) with the current brightness in one byte.
+//   * BMW K-bus (E-series / Mini R5x MFL): listen only, 9600 8E1, no master,
+//     no header — the wheel sends a frame when a button changes.
+//
+// Sources for every constant: docs/wheel-protocol-research.md.
+// ===========================================================================
+struct WheelSpec
+{
+  uint16_t baud;
+  uint8_t  checksum;
+  uint8_t  decoder;
+  uint8_t  codeByte;
+  uint8_t  rollerByte;
+  uint8_t  btnId[2];
+  uint8_t  btnLen[2];
+  uint8_t  lightId;
+  uint8_t  lightLen;
+  uint8_t  lightData[8];
+  uint8_t  lightBrightByte;
+  uint8_t  lightBrightMax;
+  uint16_t lightEveryMs;
+};
+
+static bool wheelUsesGenericPath()
+{
+  return wheelProtocol == WHEEL_PROTOCOL_VOLVO_P1 || wheelProtocol == WHEEL_PROTOCOL_VOLVO_P3 ||
+         wheelProtocol == WHEEL_PROTOCOL_CUSTOM;
+}
+
+static void resolveWheelSpec(WheelSpec& s)
+{
+  memset(&s, 0, sizeof(s));
+  s.baud = linBaud;
+  s.checksum = WHEEL_CHK_ENHANCED;
+  s.decoder = WHEEL_DEC_CODE_BYTE;
+  s.codeByte = 1;
+  s.rollerByte = 0xFF;
+  s.btnId[0] = s.btnId[1] = 0xFF;
+  s.lightId = 0xFF;
+  s.lightBrightByte = 0xFF;
+  s.lightBrightMax = 0x7F;
+  s.lightEveryMs = 100;
+
+  switch (wheelProtocol)
+  {
+  case WHEEL_PROTOCOL_VOLVO_P1:
+    // laurynas/volvo_linbus (V50): SWM_ID 0x20 at 9600; 4 data bytes, one bit
+    // per button (NEXT 00 10 00 00, VOL+ 00 00 01 00, joystick in byte 0);
+    // the posted checksums are classic. No light frame known.
+    s.baud = 9600;
+    s.checksum = WHEEL_CHK_CLASSIC;
+    s.decoder = WHEEL_DEC_BITS;
+    s.btnId[0] = 0x20;
+    s.btnLen[0] = 4;
+    break;
+
+  case WHEEL_PROTOCOL_VOLVO_P3:
+    // Arduino forum 1435919 (V40 2012+): the master polls 0x30 (left pad) and
+    // 0x20 (right pad) at 9600 with the classic checksum, and sends 0x10 =
+    // FF 00 00 00 00 00 00 00 every 500 ms ("lights"). Pad frame lengths and
+    // per-button bytes weren't published: lengths are found from the answer,
+    // buttons are one code per changed bit.
+    s.baud = 9600;
+    s.checksum = WHEEL_CHK_CLASSIC;
+    s.decoder = WHEEL_DEC_BITS;
+    s.btnId[0] = 0x30;
+    s.btnId[1] = 0x20;
+    s.lightId = 0x10;
+    s.lightLen = 8;
+    s.lightData[0] = 0xFF;
+    s.lightEveryMs = 500;
+    break;
+
+  case WHEEL_PROTOCOL_CUSTOM:
+  {
+    CustomWheelConfig c;
+    portENTER_CRITICAL(&stateMux);
+    c = customWheel;
+    portEXIT_CRITICAL(&stateMux);
+    s.baud = c.baud;
+    s.checksum = c.checksum;
+    s.decoder = c.decoder;
+    s.codeByte = c.codeByte;
+    s.rollerByte = c.rollerByte;
+    memcpy(s.btnId, c.btnId, sizeof(s.btnId));
+    memcpy(s.btnLen, c.btnLen, sizeof(s.btnLen));
+    s.lightId = c.lightId;
+    s.lightLen = c.lightLen;
+    memcpy(s.lightData, c.lightData, sizeof(s.lightData));
+    s.lightBrightByte = c.lightBrightByte;
+    s.lightBrightMax = c.lightBrightMax;
+    s.lightEveryMs = c.lightEveryMs;
+    break;
+  }
+
+  default:
+    break;
+  }
+}
+
+uint16_t profileWheelBaud()
+{
+  if (wheelProtocol == WHEEL_PROTOCOL_BMW_KBUS) return 9600;
+  if (!wheelUsesGenericPath()) return linBaud;
+  WheelSpec s;
+  resolveWheelSpec(s);
+  return s.baud;
+}
+
+// Once per LIN1 cycle, before any transaction: put the wheel UART in the
+// shape the selected profile needs (speed; 8N1 LIN vs 8E1 K-bus).
+void serviceWheelBus()
+{
+  static bool kbusOpen = false;
+  const bool wantKbus = (wheelProtocol == WHEEL_PROTOCOL_BMW_KBUS);
+  const uint16_t baud = profileWheelBaud();
+  if (wantKbus == kbusOpen && baud == wheelLinBaudNow)
+  {
+    return;
+  }
+  if (!lockLinBus(steeringWheelLinMutex))
+  {
+    return;  // next cycle
+  }
+  if (wantKbus != kbusOpen)
+  {
+    reopenWheelUart(baud, wantKbus ? SERIAL_8E1 : SERIAL_8N1);
+    kbusOpen = wantKbus;
+    wheelLinBaudNow = baud;
+    steeringWheelLIN.setBaudrate(baud);
+    logLine("[WHEEL] LIN1 reopened as %s, %u baud", wantKbus ? "K-bus 8E1 (listen only)" : "LIN 8N1",
+            (unsigned)baud);
+  }
+  else
+  {
+    setWheelLinBaud(baud);
+    logLine("[WHEEL] LIN1 speed now %u baud", (unsigned)baud);
+  }
+  unlockLinBus(steeringWheelLinMutex);
+}
+
+// ---- generic LIN path ----------------------------------------------------
+struct WheelFrameState
+{
+  uint8_t data[8];
+  uint8_t len;         // bytes in data[] from the last good read
+  uint8_t learnedLen;  // length found by probing (profile length 0), 0 = not yet
+  bool    classic;     // checksum type of the last good read
+  uint8_t fails;       // consecutive failures at learnedLen, to re-probe
+  bool    ok;          // this cycle's read was good
+};
+static WheelFrameState wheelFrames[2] = {};
+static PollHealth      healthGeneric[2];
+static Lin2FrameLog    wheelFrameLog[2] = {};
+
+// One button frame, per the profile: exact length (or the length learned for
+// it) with the profile's checksum, or a probe when the length isn't known.
+// Under WHEEL_CHK_AUTO a frame failing one checksum is rechecked against the
+// other from the raw buffer. Caller holds steeringWheelLinMutex.
+static bool readWheelFrame(uint8_t id, uint8_t wantLen, uint8_t chk, WheelFrameState& st,
+                           LIN_Master_Base::error_t& err)
+{
+  const uint8_t len = wantLen ? wantLen : st.learnedLen;
+  if (len == 0)
+  {
+    bool classic = false;
+    uint8_t buf[8] = {};
+    const uint8_t n = probeSlaveResponse(id, buf, classic, err);
+    const bool chkOk = (chk == WHEEL_CHK_AUTO) || (classic == (chk == WHEEL_CHK_CLASSIC));
+    if (n && chkOk)
+    {
+      memcpy(st.data, buf, n);
+      st.len = n;
+      st.learnedLen = n;
+      st.classic = classic;
+      st.fails = 0;
+      err = LIN_Master_Base::NO_ERROR;
+      logLine("[WHEEL] LIN1 0x%02X answers %u bytes (%s)", id, (unsigned)n, classic ? "classic" : "enhanced");
+      return true;
+    }
+    if (n) err = LIN_Master_Base::ERROR_CHK;  // answered, under the other checksum
+    return false;
+  }
+
+  const bool useClassic = (chk == WHEEL_CHK_CLASSIC) || (chk == WHEEL_CHK_AUTO && st.classic);
+  uint8_t buf[8] = {};
+  steeringWheelLIN.resetStateMachine();
+  steeringWheelLIN.resetError();
+  steeringWheelLIN.receiveSlaveResponseBlocking(useClassic ? LIN_Master_Base::LIN_V1 : LIN_Master_Base::LIN_V2,
+                                                id, len, buf);
+  err = steeringWheelLIN.getError();
+  if (err == LIN_Master_Base::NO_ERROR)
+  {
+    memcpy(st.data, buf, len);
+    st.len = len;
+    st.classic = useClassic;
+    st.fails = 0;
+    return true;
+  }
+  if (chk == WHEEL_CHK_AUTO && !(err & LIN_Master_Base::ERROR_TIMEOUT))
+  {
+    uint8_t rawLen = 0;
+    const uint8_t* raw = steeringWheelLIN.getRawRxBuffer(rawLen);  // brk sync pid data.. chk
+    if (rawLen >= (uint8_t)(len + 4))
+    {
+      const uint8_t kind = checksumKind(calculateProtectedId(id), raw + 3, len);
+      if (kind)
+      {
+        memcpy(st.data, raw + 3, len);
+        st.len = len;
+        st.classic = (kind == 1);
+        st.fails = 0;
+        err = LIN_Master_Base::NO_ERROR;
+        return true;
+      }
+    }
+  }
+  if (wantLen == 0 && ++st.fails >= 5)
+  {
+    st.learnedLen = 0;  // the learned length stopped working: probe again
+    st.fails = 0;
+  }
+  return false;
+}
+
+// Time-based press stage, in the MQB wheel's own steps (1, then 4/5/6 at
+// ~0.8/2/3 s held) for wheels that don't report one themselves.
+static uint8_t timedPressStage(uint8_t code)
+{
+  static uint8_t  lastCode = 0;
+  static uint32_t startMs = 0;
+  const uint32_t now = millis();
+  if (code == 0)
+  {
+    lastCode = 0;
+    return 0;
+  }
+  if (code != lastCode)
+  {
+    lastCode = code;
+    startMs = now;
+  }
+  const uint32_t held = now - startMs;
+  return held < 800 ? 1 : held < 2000 ? 4 : held < 3000 ? 5 : 6;
+}
+
+// Write the MQB-shaped frame every decoded profile produces.
+static void buildDecodedFrame(uint8_t* out, uint8_t code, int8_t move, uint8_t stage)
+{
+  static uint8_t counter = 0;
+  counter = (uint8_t)((counter + 1) & 0x0F);
+  memset(out, 0, 8);
+  out[0] = (uint8_t)(0x80 | counter);
+  out[4] = 0x31;
+  const uint8_t bi = (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
+  out[bi] = code;
+  if (linRotaryByteIndex < 8 && linRotaryByteIndex != bi)
+  {
+    out[linRotaryByteIndex] = (move != 0) ? (uint8_t)(move & 0x0F) : stage;
+  }
+}
+
+// Decoder memory, per button frame. Reset whenever what it describes changes
+// (profile, frame IDs / lengths, decoder — see acquireGenericWheel()) or a
+// frame's length does: otherwise the new wheel's bytes would be compared with
+// the old one's resting values and read as presses for up to 30 s.
+struct GenericDecodeState
+{
+  uint8_t  rest[8];
+  uint8_t  last[8];
+  uint8_t  streak[8];
+  uint32_t differSince[8];
+  uint8_t  len;     // length the state above was built for
+  uint8_t  warmup;  // good frames still to see before reporting any press
+  bool     haveRest;
+};
+static GenericDecodeState genericDecode[2] = {};
+
+// Frames after a (re)start during which nothing counts as pressed: a counter
+// byte is only recognised as one after 4 changes in a row, and until then its
+// first changes would read as buttons.
+constexpr uint8_t kGenericWarmupFrames = 6;
+
+static void resetGenericDecoder()
+{
+  memset(genericDecode, 0, sizeof(genericDecode));
+  for (WheelFrameState& st : wheelFrames)
+  {
+    st = WheelFrameState();
+  }
+}
+
+// Decode this cycle's good frames into `out`.
+//   WHEEL_DEC_CODE_BYTE: the code is the value of codeByte (when it differs
+//     from that byte's resting value); rollerByte, if set, holds a signed
+//     4-bit movement for that code (MQB-style), else a timed press stage.
+//   WHEEL_DEC_BITS: every bit that differs from rest is a button of its own:
+//     code 0x40 + frame*64 + byte*8 + bit (frame 0 -> 0x40-0x7F, frame 1 ->
+//     0x80-0xBF); the first one wins.
+// "Rest" is the first good frame, relearned for a byte that stays changed 30 s
+// (a button held at power-up). A byte that changes on 4 frames running is a
+// counter / CRC, never a button, and is ignored while it keeps doing so.
+static void decodeGenericWheel(const WheelSpec& s, uint8_t* out)
+{
+  const uint32_t now = millis();
+
+  bool volatileByte[2][8] = {};
+  bool warming = false;
+  for (uint8_t f = 0; f < 2; f++)
+  {
+    const WheelFrameState& st = wheelFrames[f];
+    if (!st.ok) continue;
+    GenericDecodeState& g = genericDecode[f];
+    if (g.haveRest && g.len != st.len)
+    {
+      g = GenericDecodeState();  // the frame's length changed (re-probed): start over
+    }
+    uint8_t* rest = g.rest;
+    uint8_t* last = g.last;
+    uint8_t* streak = g.streak;
+    uint32_t* differSince = g.differSince;
+    if (!g.haveRest)
+    {
+      memcpy(rest, st.data, st.len);
+      memcpy(last, st.data, st.len);
+      g.len = st.len;
+      g.warmup = kGenericWarmupFrames;
+      g.haveRest = true;
+    }
+    if (g.warmup)
+    {
+      g.warmup--;
+      warming = true;
+    }
+    for (uint8_t b = 0; b < st.len; b++)
+    {
+      const uint8_t v = st.data[b];
+      if (v != last[b])
+      {
+        if (streak[b] < 255) streak[b]++;
+      }
+      else
+      {
+        streak[b] = 0;
+      }
+      last[b] = v;
+      volatileByte[f][b] = streak[b] >= 4;
+      if (volatileByte[f][b])
+      {
+        rest[b] = v;  // keep following it, so it reads "at rest" if it ever settles
+        differSince[b] = 0;
+        continue;
+      }
+      if (v == rest[b])
+      {
+        differSince[b] = 0;
+      }
+      else if (differSince[b] == 0)
+      {
+        differSince[b] = now | 1U;
+      }
+      else if (now - differSince[b] >= 30000)
+      {
+        logLine("[WHEEL] LIN1 0x%02X byte %u rest %02X -> %02X", s.btnId[f], (unsigned)b, rest[b], v);
+        rest[b] = v;
+        differSince[b] = 0;
+      }
+    }
+  }
+
+  uint8_t code = 0;
+  int8_t  move = 0;
+  for (uint8_t f = 0; f < 2 && code == 0; f++)
+  {
+    const WheelFrameState& st = wheelFrames[f];
+    if (!st.ok) continue;
+    if (s.decoder == WHEEL_DEC_CODE_BYTE)
+    {
+      if (s.codeByte < st.len && !volatileByte[f][s.codeByte] && st.data[s.codeByte] != genericDecode[f].rest[s.codeByte])
+      {
+        code = st.data[s.codeByte];
+        if (s.rollerByte < st.len)
+        {
+          move = signedNibble(st.data[s.rollerByte]);
+        }
+      }
+    }
+    else
+    {
+      for (uint8_t b = 0; b < st.len && code == 0; b++)
+      {
+        if (volatileByte[f][b]) continue;
+        const uint8_t changed = (uint8_t)(st.data[b] ^ genericDecode[f].rest[b]);
+        for (uint8_t bit = 0; bit < 8; bit++)
+        {
+          if (changed & (1U << bit))
+          {
+            code = (uint8_t)(0x40 + f * 64 + b * 8 + bit);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (warming)
+  {
+    code = 0;  // still learning which bytes are counters
+    move = 0;
+  }
+  buildDecodedFrame(out, code, move, move ? 0 : timedPressStage(code));
+}
+
+// Read the profile's button frames into recvButtonData. Caller holds the LIN1
+// mutex. Returns the first frame's error when no frame answered.
+static LIN_Master_Base::error_t acquireGenericWheel(uint8_t& rxId)
+{
+  WheelSpec s;
+  resolveWheelSpec(s);
+  setWheelLinBaud(s.baud);
+
+  // Anything that changes what the frames mean (another profile, or the Custom
+  // profile edited) starts the decoder and the learned lengths over.
+  {
+    static uint32_t lastSig = 0;
+    uint32_t sig = 2166136261UL;
+    const uint8_t parts[] = {wheelProtocol, (uint8_t)(s.baud >> 8), (uint8_t)s.baud, s.checksum, s.decoder,
+                             s.codeByte, s.rollerByte, s.btnId[0], s.btnId[1], s.btnLen[0], s.btnLen[1]};
+    for (uint8_t p : parts) sig = (sig ^ p) * 16777619UL;
+    if (sig != lastSig)
+    {
+      lastSig = sig;
+      resetGenericDecoder();
+    }
+  }
+
+  bool anyOk = false;
+  LIN_Master_Base::error_t firstErr = LIN_Master_Base::ERROR_TIMEOUT;
+  for (uint8_t i = 0; i < 2; i++)
+  {
+    WheelFrameState& st = wheelFrames[i];
+    st.ok = false;
+    if (s.btnId[i] == 0xFF) continue;
+
+    LIN_Master_Base::error_t err;
+    st.ok = readWheelFrame(s.btnId[i], s.btnLen[i], s.checksum, st, err);
+    if (passthruEnabled)
+    {
+      logLinAttempt(1, s.btnId[i], st.data, st.len ? st.len : 8, err, st.classic);
+    }
+    reportPoll(healthGeneric[i], s.btnId[i], steeringWheelLIN, Serial1, err, i == 0);
+    if (st.ok)
+    {
+      anyOk = true;
+      if (!passthruEnabled)
+      {
+        logFrameOnChange(wheelFrameLog[i], 1, s.btnId[i], st.data, st.len, st.classic);
+      }
+    }
+    else if (i == 0)
+    {
+      firstErr = err;
+    }
+  }
+
+  rxId = (s.btnId[0] != 0xFF) ? s.btnId[0] : 0;
+  if (!anyOk)
+  {
+    return firstErr;
+  }
+  decodeGenericWheel(s, recvButtonData);
+  return LIN_Master_Base::NO_ERROR;
+}
+
+// The profile's master frame to the wheel (backlight / wake), if it has one.
+static void sendGenericLight()
+{
+  WheelSpec s;
+  resolveWheelSpec(s);
+  if (s.lightId == 0xFF || s.lightLen == 0)
+  {
+    return;
+  }
+  static uint32_t lastMs = 0;
+  const uint32_t now = millis();
+  if (lastMs != 0 && now - lastMs < s.lightEveryMs)
+  {
+    return;
+  }
+  lastMs = now | 1U;
+
+  uint8_t d[8];
+  memcpy(d, s.lightData, sizeof(d));
+  if (s.lightBrightByte < s.lightLen)
+  {
+    // steeringWheelLightData[0] is the brightness every profile computes the
+    // same way (Aux PWM / LIN / forced — updateBacklightState()), 0..upperLightsLIN.
+    const uint32_t top = upperLightsLIN ? upperLightsLIN : 1;
+    uint32_t v = steeringWheelLightData[0];
+    if (v > top) v = top;
+    d[s.lightBrightByte] = (uint8_t)((v * s.lightBrightMax) / top);
+  }
+  // Checksum: the profile's; under Auto the one the wheel's own answers use
+  // (classic until one has been seen).
+  const bool classic = (s.checksum == WHEEL_CHK_CLASSIC) ||
+                       (s.checksum == WHEEL_CHK_AUTO && (wheelFrames[0].len == 0 || wheelFrames[0].classic));
+
+  if (!lockLinBus(steeringWheelLinMutex))
+  {
+    return;
+  }
+  setWheelLinBaud(s.baud);
+  steeringWheelLIN.resetStateMachine();
+  steeringWheelLIN.resetError();
+  steeringWheelLIN.sendMasterRequestBlocking(classic ? LIN_Master_Base::LIN_V1 : LIN_Master_Base::LIN_V2,
+                                             s.lightId, s.lightLen, d);
+  const LIN_Master_Base::error_t err = steeringWheelLIN.getError();
+  if (passthruEnabled)
+  {
+    logLinAttempt(1, s.lightId, d, s.lightLen, err, classic);
+  }
+  notePollResult(healthLight, 1, s.lightId, err);
+  unlockLinBus(steeringWheelLinMutex);
+
+  static Lin2FrameLog lightLog = {};
+  if (!passthruEnabled)
+  {
+    logFrameOnChange(lightLog, 1, s.lightId, d, s.lightLen, classic);
+  }
+}
+
+// ---- BMW K-bus / I-bus path ------------------------------------------------
+// wilhelm-docs + sda2/arduino-ibus-integration: frame = source, length (bytes
+// after it, incl. checksum), destination, command, data.., XOR of every byte
+// before the checksum. The MFL is source 0x50:
+//   0x32 volume   data bit 0: 1 = up, 0 = down (one step per frame)
+//   0x3B buttons  0x01 next, 0x08 previous, 0x40 R/T, 0x80 telephone;
+//                 | 0x10 = held, | 0x20 = released
+// The wheel only talks when something changes, so there is nothing to poll.
+static uint8_t  kbusBuf[40];
+static uint8_t  kbusLen = 0;
+static uint8_t  kbusCode = 0;
+static uint8_t  kbusStage = 0;
+static int8_t   kbusMove = 0;
+static uint32_t kbusPressMs = 0;
+constexpr uint8_t kKbusVolumeCode = 0xF1;  // the volume "roller", as on a LIN 1.3 wheel
+
+static void handleKbusFrame(const uint8_t* f, uint8_t n)
+{
+  swLinLastOkMs = millis();  // a valid K-bus frame, from anyone: the bus is alive
+  if (f[0] != 0x50 || n < 6)
+  {
+    return;  // another module's frame: not the wheel's
+  }
+  char hex[3 * 12 + 1];
+  size_t pos = 0;
+  for (uint8_t i = 0; i < n && i < 12; i++)
+  {
+    pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", f[i]);
+  }
+  hex[pos ? pos - 1 : 0] = '\0';
+  logLine("KBUS MFL: %s", hex);
+
+  const uint8_t cmd = f[3];
+  const uint8_t d = f[4];
+  if (cmd == 0x32)
+  {
+    const int8_t step = (d & 0x01) ? 1 : -1;
+    kbusMove = (int8_t)constrain(kbusMove + step, -7, 7);  // a signed nibble's range
+  }
+  else if (cmd == 0x3B)
+  {
+    const uint8_t button = (uint8_t)(d & 0xC9);
+    const uint8_t state  = (uint8_t)(d & 0x30);
+    if (state == 0x20 || button == 0)
+    {
+      kbusCode = 0;
+      kbusStage = 0;
+    }
+    else
+    {
+      if (button != kbusCode) kbusPressMs = millis();
+      kbusCode = button;
+      kbusStage = (state == 0x10) ? 4 : 1;
+    }
+  }
+}
+
+static void serviceKbusRx()
+{
+  // No gap timer: this runs every ~100 ms, so the time between calls says
+  // nothing about the gaps between a frame's bytes. A partly arrived frame
+  // just waits for its rest; anything broken is slid past by the length /
+  // XOR check below.
+  const uint32_t now = millis();
+  while (Serial1.available())
+  {
+    const uint8_t b = (uint8_t)Serial1.read();
+    if (kbusLen < sizeof(kbusBuf))
+    {
+      kbusBuf[kbusLen++] = b;
+    }
+    else
+    {
+      memmove(kbusBuf, kbusBuf + 1, sizeof(kbusBuf) - 1);
+      kbusBuf[sizeof(kbusBuf) - 1] = b;
+    }
+    while (kbusLen >= 2)
+    {
+      const uint8_t L = kbusBuf[1];
+      if (L < 3 || L > sizeof(kbusBuf) - 2)
+      {
+        memmove(kbusBuf, kbusBuf + 1, --kbusLen);  // not a frame start: slide on
+        continue;
+      }
+      if (kbusLen < (uint8_t)(L + 2)) break;  // wait for the rest
+      uint8_t x = 0;
+      for (uint8_t i = 0; i < L + 1; i++) x ^= kbusBuf[i];
+      if (x == kbusBuf[L + 1])
+      {
+        handleKbusFrame(kbusBuf, (uint8_t)(L + 2));
+        kbusLen = (uint8_t)(kbusLen - (L + 2));
+        memmove(kbusBuf, kbusBuf + L + 2, kbusLen);
+      }
+      else
+      {
+        memmove(kbusBuf, kbusBuf + 1, --kbusLen);
+      }
+    }
+  }
+  // A lost "released" frame must not hold a button forever.
+  if (kbusCode != 0 && now - kbusPressMs > 10000)
+  {
+    kbusCode = 0;
+    kbusStage = 0;
+  }
+}
+
+static void acquireKbusWheel(uint8_t& rxId)
+{
+  serviceKbusRx();
+  rxId = 0x50;
+  // Volume steps wait while a button is held: reporting them would replace the
+  // held code for a poll — a false release + re-press, which toggles latches.
+  if (kbusMove != 0 && kbusCode == 0)
+  {
+    if (markRollerCode(kKbusVolumeCode))
+    {
+      logLine("[SW] code 0x%02X is the K-bus volume (scroll up / down)", kKbusVolumeCode);
+    }
+    buildDecodedFrame(recvButtonData, kKbusVolumeCode, kbusMove, 0);
+    kbusMove = 0;  // one poll per batch of volume steps
+    return;
+  }
+  uint8_t stage = kbusStage;
+  if (kbusCode != 0)
+  {
+    const uint32_t held = millis() - kbusPressMs;
+    const uint8_t timed = held < 800 ? 1 : held < 2000 ? 4 : held < 3000 ? 5 : 6;
+    if (timed > stage) stage = timed;
+  }
+  buildDecodedFrame(recvButtonData, kbusCode, 0, kbusCode ? stage : 0);
+}
+
 void getButtonState()
 {
   memset(recvButtonData, 0, sizeof(recvButtonData));
@@ -855,44 +2340,89 @@ void getButtonState()
     return;
   }
 
-  steeringWheelLIN.resetStateMachine();
-  steeringWheelLIN.resetError();
-  steeringWheelLIN.receiveSlaveResponseBlocking(LIN_Master_Base::LIN_V2, linButtonInId, 8, recvButtonData);
+  uint8_t rxId = linButtonInId;
+  LIN_Master_Base::error_t linErr = LIN_Master_Base::NO_ERROR;
 
-  // Discard the frame if the library flagged any error (timeout, checksum,
-  // echo mismatch, etc.).  Without this, partial bytes written by a failed
-  // receive leave garbage in recvButtonData[1] which matches a button mapping
-  // and makes a button appear pressed when nothing was touched.
-  const LIN_Master_Base::error_t linErr = steeringWheelLIN.getError();
-
-  // Log the raw receive attempt BEFORE any error-based discard below, so a
-  // checksum-failed or timed-out frame still shows its actual bytes here.
-  if (passthruEnabled)
+  if (wheelProtocol == WHEEL_PROTOCOL_BMW_KBUS)
   {
-    logLinAttempt(1, linButtonInId, recvButtonData, 8, linErr);
-    logLinRawResidual(1, linButtonInId, Serial1);
-    logLinRawFrame(1, linButtonInId, steeringWheelLIN, linErr);
+    // Listen-only bus: nothing to ask, so nothing can "fail" — idle is silence.
+    acquireKbusWheel(rxId);
+    noteButtonFrameResult(true);
   }
-
-  if (linErr != LIN_Master_Base::NO_ERROR)
+  else if (wheelUsesGenericPath())
   {
-    memset(recvButtonData, 0, sizeof(recvButtonData));
+    linErr = acquireGenericWheel(rxId);
+    noteButtonFrameResult(linErr == LIN_Master_Base::NO_ERROR);
+    if (linErr != LIN_Master_Base::NO_ERROR)
+    {
+      memset(recvButtonData, 0, sizeof(recvButtonData));
+    }
+    else
+    {
+      swLinLastOkMs = millis();
+    }
   }
   else
   {
-    swLinLastOkMs = millis();  // LIN 1 healthy
-    if (!passthruEnabled)
+    // An Audi wheel answers a different frame (0x30, 6 bytes, classic checksum)
+    // — decoded into recvButtonData below. Its wheel-side ID is fixed rather than
+    // taken from linButtonInId, which stays the ID the chassis/BCM polls on LIN2.
+    const bool audi = (wheelProtocol == WHEEL_PROTOCOL_AUDI);
+    rxId = audi ? audiButtonID : (uint8_t)linButtonInId;
+    uint8_t audiRaw[audiButtonLen] = {};
+    uint8_t* rxBuf = audi ? audiRaw : recvButtonData;
+    const uint8_t rxLen = audi ? audiButtonLen : 8;
+
+    steeringWheelLIN.resetStateMachine();
+    steeringWheelLIN.resetError();
+    steeringWheelLIN.receiveSlaveResponseBlocking(audi ? LIN_Master_Base::LIN_V1 : LIN_Master_Base::LIN_V2,
+                                                  rxId, rxLen, rxBuf);
+
+    // Discard the frame if the library flagged any error (timeout, checksum,
+    // echo mismatch, etc.).  Without this, partial bytes written by a failed
+    // receive leave garbage in recvButtonData[1] which matches a button mapping
+    // and makes a button appear pressed when nothing was touched.
+    linErr = steeringWheelLIN.getError();
+
+    // Log the raw receive attempt BEFORE any error-based discard below, so a
+    // checksum-failed or timed-out frame still shows its actual bytes here.
+    if (passthruEnabled)
     {
-      logLinFrameIfChanged(1, linButtonInId, recvButtonData, 8);
+      logLinAttempt(1, rxId, rxBuf, rxLen, linErr, audi);
+      logLinRawResidual(1, rxId, Serial1);
+      logLinRawFrame(1, rxId, steeringWheelLIN, linErr);
+    }
+    reportPoll(healthButton, rxId, steeringWheelLIN, Serial1, linErr, true);
+    noteButtonFrameResult(linErr == LIN_Master_Base::NO_ERROR);
+
+    if (linErr != LIN_Master_Base::NO_ERROR)
+    {
+      memset(recvButtonData, 0, sizeof(recvButtonData));
+    }
+    else
+    {
+      swLinLastOkMs = millis();  // LIN 1 healthy
+      if (!passthruEnabled)
+      {
+        if (audi) logAudiFrameIfChanged(audiRaw);  // the raw frame, not the decoded one
+        else      logLinFrameIfChanged(1, linButtonInId, recvButtonData, 8);
+      }
+      if (audi)
+      {
+        decodeAudiFrame(audiRaw, recvButtonData);
+      }
     }
   }
 
   unlockLinBus(steeringWheelLinMutex);
 
+  // For an Audi wheel this is the DECODED (MQB-shaped) frame — what the
+  // mapping table matches against and what passthru relays; the LIN Monitor
+  // carries the raw 0x30 bytes.
   portENTER_CRITICAL(&stateMux);
   memcpy(lastLinInFrame, recvButtonData, sizeof(lastLinInFrame));
   lastLinInLen = sizeof(lastLinInFrame);
-  lastLinInId = linButtonInId;
+  lastLinInId = rxId;
   portEXIT_CRITICAL(&stateMux);
 
   const uint8_t bi = (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
@@ -972,21 +2502,90 @@ void sendLightLINFrame()
 {
   // Light frame goes ONLY to the steering wheel LIN bus.
   // Chassis LIN is a source (read FROM), not a destination for light data.
+  if (wheelProtocol == WHEEL_PROTOCOL_BMW_KBUS)
+  {
+    return;  // listen only: never transmit on someone else's K-bus
+  }
+  if (wheelUsesGenericPath())
+  {
+    sendGenericLight();
+    return;
+  }
   if (!lockLinBus(steeringWheelLinMutex))
   {
     return;
   }
 
+  // A LIN 1.3 wheel has no 0x0D. Its column module publishes 0x01 instead (2
+  // bytes, classic): "50 03" with ignition on, "00 03" off, every 40 ms on a
+  // PQ35 J527 (katzenberger captures); an A4 B8 car sends "00 FF" there. What
+  // the bytes mean isn't known, so the ignition-on capture is replayed as is.
+  // Its brightness: unknown — on B7/B8-era Audi wheels the button lighting is
+  // reportedly a separate PWM wire (terminal 58s), not a LIN frame at all.
+  const bool lin13 = (wheelProtocol == WHEEL_PROTOCOL_AUDI);
+  static uint8_t lin13Frame01[2] = {0x50, 0x03};
+  // VW Up! / Citigo / Mii (NSF): 0x0D is only 2 bytes, brightness 00-7F then
+  // FF — without the FF the wheel stops reporting buttons
+  // (riquenunes/vw-steering-wheel-gamepad).
+  const bool nsf = (wheelProtocol == WHEEL_PROTOCOL_NSF);
+  uint8_t nsfFrame[2] = {steeringWheelLightData[0], 0xFF};
+  const uint8_t  txId  = lin13 ? kLin13MasterId : (uint8_t)linLightInId;
+  uint8_t*       txBuf = lin13 ? lin13Frame01 : nsf ? nsfFrame : steeringWheelLightData;
+  const uint8_t  txLen = (lin13 || nsf) ? 2 : 4;
+
   steeringWheelLIN.resetStateMachine();
   steeringWheelLIN.resetError();
-  steeringWheelLIN.sendMasterRequestBlocking(LIN_Master_Base::LIN_V2, linLightInId, 4, steeringWheelLightData);
+  steeringWheelLIN.sendMasterRequestBlocking(lin13 ? LIN_Master_Base::LIN_V1 : LIN_Master_Base::LIN_V2, txId,
+                                             txLen, txBuf);
+  const LIN_Master_Base::error_t err = steeringWheelLIN.getError();
 
   if (passthruEnabled)
   {
-    logLinAttempt(1, linLightInId, steeringWheelLightData, 4, steeringWheelLIN.getError());
+    logLinAttempt(1, txId, txBuf, txLen, err, lin13);
   }
+  // A master send failing means the bus itself is wrong (no echo of our own
+  // bits: transceiver asleep, RX/TX swapped, shorted), not a quiet wheel.
+  notePollResult(healthLight, 1, txId, err);
 
   unlockLinBus(steeringWheelLinMutex);
+
+  if (lin13)
+  {
+    static bool logged = false;
+    if (!logged && !passthruEnabled)
+    {
+      logged = true;
+      logLine("LIN1 0x%02X to wheel: %02X %02X (LIN 1.3 master frame)", txId, txBuf[0], txBuf[1]);
+    }
+    return;
+  }
+
+  // Backlight sent to the wheel, logged on change (at most every 500 ms; a
+  // dimmer being turned changes it every cycle). With the chassis frames
+  // captured on LIN2 (serviceChassisLinBus()), a log shows both ends of the
+  // backlight path: what the car asked for and what the wheel was given.
+  if (!passthruEnabled)
+  {
+    static uint8_t  logged[4] = {};
+    static uint8_t  loggedLen = 0;
+    static uint32_t loggedMs = 0;
+    const uint32_t now = millis();
+    if ((loggedLen != txLen || memcmp(logged, txBuf, txLen) != 0) && now - loggedMs >= 500)
+    {
+      memcpy(logged, txBuf, txLen);
+      loggedLen = txLen;
+      loggedMs = now;
+      if (txLen == 2)
+      {
+        logLine("LIN1 0x%02X to wheel: %02X %02X (backlight)", txId, logged[0], logged[1]);
+      }
+      else
+      {
+        logLine("LIN1 0x%02X to wheel: %02X %02X %02X %02X (backlight)", txId, logged[0], logged[1],
+                logged[2], logged[3]);
+      }
+    }
+  }
 }
 
 void sendButtonLINFrame()
@@ -1036,6 +2635,27 @@ void sendButtonLINFrame()
   // been mapped yet.
   uint8_t response[8];
   memcpy(response, recvButtonData, sizeof(response));
+
+  // Except a LIN 1.3 wheel's (decodeAudiFrame()): its frame is a translation,
+  // not a LIN 2.x one. Bytes 2/5/7 there are this firmware's "changed bits"
+  // and never go to the car as they are (a matched row writes its own code
+  // below); an unmapped button code is cleared with its movement/stage byte
+  // too, since the wheel's 0x5C1-style codes aren't the car's LIN codes. Done
+  // before shaping, which turns that byte into a PQ chassis' position.
+  if (!wheelIsVwLin2())  // every decoded profile: LIN 1.3, Volvo, K-bus, Custom
+  {
+    response[2] = 0;
+    response[5] = 0;
+    response[7] = 0;
+    if (pressedMappingIndex(recvButtonData) < 0)
+    {
+      response[(linButtonByteIndex < 8) ? linButtonByteIndex : 1] = 0;
+      if (linRotaryByteIndex < 8)
+      {
+        response[linRotaryByteIndex] = 0;
+      }
+    }
+  }
 
   // Reshape for the chassis family before any code is written in, so a mapping
   // that lives in byte 6 (paddles) overwrites the family constant rather than
@@ -1261,6 +2881,7 @@ void getAccButtonState()
     logLinRawResidual(1, linAccInId, Serial1);
     logLinRawFrame(1, linAccInId, steeringWheelLIN, linErr);
   }
+  reportPoll(healthAcc, linAccInId, steeringWheelLIN, Serial1, linErr);
 
   if (linErr != LIN_Master_Base::NO_ERROR)
   {
@@ -1338,14 +2959,15 @@ void getTemperatureState()
 
   const LIN_Master_Base::error_t linErr = steeringWheelLIN.getError();
 
-  unlockLinBus(steeringWheelLinMutex);
-
   if (passthruEnabled)
   {
     logLinAttempt(1, linTempInId, buf, sizeof(buf), linErr);
     logLinRawResidual(1, linTempInId, Serial1);
     logLinRawFrame(1, linTempInId, steeringWheelLIN, linErr);
   }
+  reportPoll(healthTemp, linTempInId, steeringWheelLIN, Serial1, linErr);
+
+  unlockLinBus(steeringWheelLinMutex);
 
   if (linErr != LIN_Master_Base::NO_ERROR)
   {

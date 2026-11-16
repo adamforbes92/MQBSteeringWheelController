@@ -445,6 +445,7 @@ static void analyzerTask(void *arg) {
       if (serialStarted) {
         serialStarted = false;
         resetGvretParser();
+        Serial.begin(115200);  // back to the log console speed (see basicInit())
       }
       vTaskDelay(kAnalyzerPollDelayMs / portTICK_PERIOD_MS);
       continue;

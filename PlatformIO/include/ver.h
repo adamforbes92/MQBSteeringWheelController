@@ -5,6 +5,150 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.12 - Wheel profiles (16/11/2026). Wheel Protocol is now a profile: LIN1
+        speed, checksum, frames polled, how buttons are coded and what is sent
+        to the wheel. Sources for each: docs/wheel-protocol-research.md. NONE of
+        the new profiles has been tested on a real wheel here.
+        3 VW Up! / Citigo / Mii (NSF): PQ frame and codes, but 0x0D is 2 bytes
+          {brightness, FF} (riquenunes/vw-steering-wheel-gamepad: without the FF
+          the wheel stops reporting). PQ family for rotary/shaping
+          (wheelIsPqFamily()); scan recognises it by 0x0C (4 bytes) next to 0x0E.
+        4 Volvo P1: 9600, classic, poll 0x20 (4 bytes), bit decoder
+          (laurynas/volvo_linbus). No light frame known.
+        5 Volvo P3: 9600, classic, poll 0x30 + 0x20 (lengths found from the
+          answer), bit decoder, 0x10 = FF 00.. every 500 ms (Arduino forum
+          1435919).
+        6 BMW E-series / Mini R5x MFL on the K/I-bus: Serial1 reopened 9600 8E1
+          (reopenWheelUart(), Legacy-PCB swap kept), listen only — nothing on
+          LIN1 is ever transmitted in this profile; frames parsed by length +
+          XOR; source 0x50 cmd 0x32 volume -> scroll code F1, cmd 0x3B buttons
+          01/08/40/80 with press/hold/release (wilhelm-docs, sda2).
+        7 Custom: CustomWheelConfig (globals.h), NVS blob "custWheel", /api/setup
+          "customWheel": speed 19200/10417/9600, checksum enhanced/classic/auto,
+          1-2 button frames (length 0 = found from the answer and remembered,
+          re-probed after 5 failures), code-byte (+ optional signed-nibble
+          scroll byte) or one-bit-per-button decoder, optional master frame to
+          the wheel with a brightness byte and interval.
+        Plumbing: LIN library patch setBaudrate() (the library re-applies its
+        rate every transaction, so no port reopen); serviceWheelBus() applies
+        the profile's speed/format each LIN1 cycle; probeSlaveResponse()
+        (shared with the scan) finds an answer's length + checksum; the bit
+        decoder keeps a per-byte rest (relearned after 30 s) and ignores a byte
+        changing 4 frames running (counter); every decoded profile builds the
+        same MQB-shaped frame as the LIN 1.3 one; non-VW profiles skip the
+        0x0F / 0x3A polls; logFrameOnChange() (from the LIN2 capture) logs the
+        wheel's raw frames. Wheel scan: a second pass at 9600 when nothing
+        answers at 19200; hits carry baud; recognises NSF / Volvo P1 / P3.
+        UI: grouped Wheel Protocol list; Setup > Advanced > Custom wheel form
+        with "Fill from last scan"; scan hits show their speed.
+        From a code review before the first build: the generic decoder and
+        learned lengths reset when the profile / Custom frames change (else
+        the new wheel read as presses for up to 30 s), and report nothing for
+        the first 6 frames while counters are recognised; K-bus: no gap timer
+        (it measured time between 100 ms reads, so dropped split frames),
+        volume clamp no longer blocks the other direction, volume waits while
+        a button is held (no false release); a scan stops at once if the
+        K-bus profile is chosen mid-scan; the LIN2 capture logs only after the
+        RX FIFO is drained (logLine also writes to the serial console, which
+        can block — never before answering the BCM), and while collecting a
+        frame our own light / button IDs also need a real header (BREAK
+        first), so a 55 + PID inside another frame's data isn't answered.
+
+V1.11 - Web UI: "Fit a new wheel" wizard + wheel detect (16/11/2026).
+        Buttons tab: a four-step wizard (current wheel -> swap -> new wheel ->
+        test & save) on the existing probe Learn (LEARN_PROBE): step 1 records
+        each row's To car code from the wheel fitted now and saves (the swap
+        powers the controller off), step 2 sets the new wheel's protocol /
+        activation preset and waits for it to answer (LIN1 scan), step 3 learns
+        each row's From wheel code (rollers go through the scroll-wheel
+        wizard; Skip / Not on this wheel / Add extra button), step 4 saves and
+        lights each row as its button is pressed, with Export. Progress from
+        step 2 survives a page reload. It waits for the wheel to be back at
+        rest before arming each Learn (a baseline taken while a button is held
+        stops that byte ever capturing).
+        Table: columns renamed From wheel (oldButtonId) / To car
+        (newLinButtonId), codes shown and typed in hex, each Learn button sits
+        in its code cell and counts down while armed; on a phone each row is a
+        card with its outputs folded behind an Outputs toggle; the row being
+        pressed is highlighted live.
+        Fix: every normally learned row had an orange "suspect byte" outline.
+        Learn stores the byte it captured from (sourceByte 1 for a plain
+        button, captureLearned() in LIN.cpp) but srcByteSuspect() accepted only
+        0, 6 and 7; the Button data byte now counts as normal too (and bytes 2
+        and 5 on a LIN 1.3 wheel).
+        Setup split into "Wheel & car" (always shown) and "Advanced"
+        (collapsed). Wheel-detect banner on Dashboard / Setup when the last
+        LIN1 scan suggests a different Wheel Protocol (one-click switch), finds
+        an unknown wheel, or nothing answers; Diagnostics > LIN Monitor "Scan
+        LIN1" button with the answering IDs. Status messages now show on the
+        Buttons / Setup tabs (they went to the OTA tab's status line).
+        Wheel Protocol 2 relabelled "VAG LIN 1.3 (Audi A4/A8, early Golf 5 /
+        Leon / Octavia 2; frame 0x30)".
+        Firmware, from the same work: Learn no longer goes deaf when armed
+        while a button is held — captureLearnedFromFrame() resets a byte's
+        idle reference to 0 when that byte reads 0 (bytes resting at a non-zero
+        constant are untouched); fixes the table's Learn and the scroll wizard,
+        not just the fit wizard. /api/status adds matchedRow (the row the LIN
+        task matched, -1 none; the live highlight uses it instead of guessing
+        by name) and uptimeMs (the UI shows how old the last LIN1 scan is).
+
+V1.10 -Audi wheel protocol + serial console (16/11/2026).
+        Serial: a customer reported no serial output at all. Up to V1.09 the
+        console was only started, and logLine() only mirrored, with
+        enableDebug (0 in every release), so nothing reached USB. Now
+        Serial.begin(115200) always runs, a [BOOT] line names the firmware and
+        board, and every LIN Monitor line is mirrored as "[LOG] ..." (not while
+        the SavvyCAN serial analyzer owns the port; it goes back to 115200 when
+        that is switched off). DevKit: 4 KB TX ring so the LIN tasks don't
+        block on UART0; S3 native USB: 10 ms TX timeout.
+        Audi wheel: Wheel Protocol 2 = Audi (LIN 1.3), from the same customer's
+        A8 wheel. The capture shows it never answers 0x0E: it answers 0x30
+        (6 data bytes) and 0x21 (2 bytes), every frame valid only under the
+        CLASSIC checksum. It is the generic VAG LIN 1.3 wheel, not Audi-only:
+        the same frames come from an Audi A4 2013 (Arduino forum thread 934599;
+        its dumps carry PIDs C1/61/F0) and early PQ35 Leon 1P / Octavia 2
+        wheels on a LIN-1.3 J527 (github katzenberger/vag-mfsw-lin-bus-protocol,
+        Saleae captures). There d0 low nibble / d1 follow the counter, d2 is
+        the wheel's own BUTTON CODE (PQ35: the radio-CAN 0x5C1 codes; A4:
+        single-bit values), d3 0x04 = horn (PQ35), d4 = two signed roller
+        nibbles (A8 log: only the high one moved, 1..6; A4: 10/F0, 01/0F).
+        decodeAudiFrame() builds an MQB-shaped frame: byte1 = d2 as sent, or
+        0xF1/0xF2 while a roller moves; byte3 = movement or a timed press stage;
+        bytes 7/5/2 = bits of d3/d5/d0-high that differ from rest (first frame;
+        relearned after 30 s changed). Learn / rollers / long press / chassis
+        shaping run on it unchanged; unmapped codes and bytes 2/5/7 never reach
+        the car. The master frame 0x01 = "50 03" (PQ35 J527, ignition on) is
+        sent instead of VW's 0x0D; 0x21 is polled ~1 s and logged on change;
+        0x0F / 0x3A polls are skipped. Passthru log says v1 for these frames.
+        Unknown: A8 controls, and backlight — on B7/B8-era Audi the button
+        light is reportedly a terminal-58s PWM wire, not LIN.
+        LIN Monitor (the real complaint: the customer's web UI log was empty).
+        A normal-mode log held only intact, changed frames, so a wheel on
+        another protocol — every poll a TIMEOUT — logged nothing at all. Now:
+        - poll health: each polled LIN1 frame logs when it stops answering
+          (reason + any bytes that arrived: FIFO residual on TIMEOUT, captured
+          frame on CHK), when it recovers, and every 10 s while the BUTTON
+          frame stays down (notePollResult() / reportPoll()). Master-send
+          failures of the 0x0D light frame are reported the same way.
+        - wheel detect: runLinScan() asks every ID 0x00-0x3B for a slave
+          response and reports each answer's real length + checksum (OK = 8
+          enhanced; CHK with a classic-valid raw buffer = 8 classic; TIMEOUT
+          with bytes left in the FIFO = shorter frame, either checksum). Names
+          known signatures (0x0E PQ/MQB by idle constants, 0x30 Audi) and says
+          when that is not the selected Wheel Protocol. Automatic after 5 s of
+          no valid button frame (max once a minute, logged only when the
+          result changes), or POST /api/lin/scan. Result in /api/status
+          "linScan" {seq, ms, suggest, hits[]}.
+        - backlight: the 0x0D frame sent to the wheel is logged on change
+          (max 2/s). On LIN2 every frame this device doesn't handle is now
+          captured in normal mode too — collected without blocking until the
+          bus is quiet or the next real header (valid parity + BREAK) starts,
+          length/checksum found from the bytes, logged on first sight and on
+          change, per-byte counters masked after 4 changes in a row, max 4/s
+          per ID; an unanswered header is noted once. This is how an unknown
+          car's backlight frame is found. Replaces passthru's once-per-ID
+          "header seen" line. /api/log/clear now takes the log's own lock.
+
 V1.09 - MEB (ID.x) chassis protocol (13/11/2026), from PR #2 (waldo22, MQB
         Atlas/Taos buttons in an ID.4 / ID. Buzz). Chassis Protocol 2 = MEB:
         CHASSIS_PROTOCOL_MEB, accepted by /api/setup and NVS (was clamped back

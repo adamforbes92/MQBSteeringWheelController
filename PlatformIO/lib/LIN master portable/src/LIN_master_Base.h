@@ -317,6 +317,25 @@ class LIN_Master_Base
 
     } // getRawRxBuffer()
 
+
+    /// @brief LOCAL PATCH (not upstream): change the bus speed at runtime.
+    /// Every transaction already re-applies `baudrate` to the UART (the BREAK
+    /// is sent at half of it, then the nominal rate is restored — see
+    /// _sendBreak() / _sendFrame() in LIN_master_HardwareSerial_ESP32.cpp), so
+    /// updating it and the per-byte time the timeouts derive from is all a
+    /// speed change needs; no reopen of the port (which would undo the main
+    /// project's Legacy-PCB RX/TX swap). Used by the wheel profiles: Volvo
+    /// wheels run at 9600, GM's are reportedly 10417, VW/Audi 19200.
+    inline void setBaudrate(uint16_t Baudrate)
+    {
+      this->baudrate    = Baudrate;
+      this->timePerByte = 10000000L / (uint32_t) Baudrate;
+
+    } // setBaudrate()
+
+    /// @brief LOCAL PATCH: current bus speed (see setBaudrate()).
+    inline uint16_t getBaudrate(void) const { return this->baudrate; }
+
     
     /// @brief Start sending a LIN master request frame in background (if supported)
     LIN_Master_Base::state_t sendMasterRequest(LIN_Master_Base::version_t Version = LIN_Master_Base::LIN_V2, 

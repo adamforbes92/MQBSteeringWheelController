@@ -7,6 +7,7 @@
 #include <LittleFS.h>
 
 #include "CAN.h"
+#include "LIN.h"
 #include "globals.h"
 #include "savvycan.h"
 
@@ -135,11 +136,47 @@ void setupApiServer() {
     doc["outgoingCanData"] = frameToHex(lastCanOutFrame, lastCanOutLen);
     doc["incomingAccData"] = frameToHex(lastAccInFrame, lastAccInLen);
     doc["incomingTempData"] = frameToHex(lastTempInFrame, lastTempInLen);
+
+    // LIN1 wheel detect / ID scan result (runLinScan() in LIN.cpp). suggest:
+    // a WHEEL_PROTOCOL_* (0 PQ / 1 MQB / 2 VAG LIN 1.3 / 3 Up! / 4 Volvo P1 /
+    // 5 Volvo P3), 253 unknown wheel, 254 nothing answered,
+    // 255 no scan yet.
+    {
+      LinScanHit hits[kLinScanMaxHits];
+      portENTER_CRITICAL(&stateMux);
+      memcpy(hits, linScanHits, sizeof(hits));
+      const uint8_t n = linScanHitCount;
+      const uint32_t seq = linScanSeq;
+      const uint32_t ms = linScanMs;
+      const uint8_t suggest = linScanSuggest;
+      portEXIT_CRITICAL(&stateMux);
+
+      JsonObject scan = doc["linScan"].to<JsonObject>();
+      scan["seq"] = seq;
+      scan["ms"] = ms;
+      scan["suggest"] = suggest;
+      JsonArray arr = scan["hits"].to<JsonArray>();
+      for (uint8_t i = 0; i < n && i < kLinScanMaxHits; i++) {
+        JsonObject h = arr.add<JsonObject>();
+        h["id"] = hits[i].id;
+        h["len"] = hits[i].len;
+        h["classic"] = hits[i].classic;
+        h["data"] = frameToHex(hits[i].data, hits[i].len);
+        h["baud"] = hits[i].baud;
+      }
+    }
     doc["latestButtonId"] = latestLinButtonId;
     doc["buttonIncoming"] = buttonIncoming;
     doc["buttonOutgoing"] = buttonOutgoing;
 
     doc["pressedButtonName"] = pressedButtonName;
+    // Row index the LIN task matched (held for the CAN hold window), -1 if
+    // none: lets the UI highlight the exact row even when names repeat.
+    doc["matchedRow"] = (matchFresh && matchedRow >= 0 && (size_t)matchedRow < buttonMappingCount)
+                            ? (int)matchedRow : -1;
+    // Device uptime, so the UI can tell how old linScan.ms (and any other
+    // millis() stamp) is.
+    doc["uptimeMs"] = (uint32_t)millis();
 
     // CAN frame bytes as an array so the frontend can render each bit
     JsonArray canBytesArr = doc["canBytes"].to<JsonArray>();
@@ -298,6 +335,32 @@ void setupApiServer() {
     doc["linButtonByteIndex"] = linButtonByteIndex;
     doc["linRotaryByteIndex"] = linRotaryByteIndex;
     doc["wheelProtocol"] = wheelProtocol;
+    {
+      // Custom wheel profile (Wheel Protocol 7). Always reported, so the UI
+      // can show / pre-fill it whichever profile is selected.
+      CustomWheelConfig c;
+      portENTER_CRITICAL(&stateMux);
+      c = customWheel;
+      portEXIT_CRITICAL(&stateMux);
+      JsonObject cw = doc["customWheel"].to<JsonObject>();
+      cw["baud"] = c.baud;
+      cw["checksum"] = c.checksum;
+      cw["decoder"] = c.decoder;
+      cw["codeByte"] = c.codeByte;
+      cw["rollerByte"] = c.rollerByte;
+      JsonArray ids = cw["btnId"].to<JsonArray>();
+      JsonArray lens = cw["btnLen"].to<JsonArray>();
+      for (uint8_t i = 0; i < 2; i++) {
+        ids.add(c.btnId[i]);
+        lens.add(c.btnLen[i]);
+      }
+      cw["lightId"] = c.lightId;
+      cw["lightLen"] = c.lightLen;
+      cw["lightData"] = frameToHex(c.lightData, sizeof(c.lightData));
+      cw["lightBrightByte"] = c.lightBrightByte;
+      cw["lightBrightMax"] = c.lightBrightMax;
+      cw["lightEveryMs"] = c.lightEveryMs;
+    }
     doc["mqbActByte1"] = mqbActByte1;
     doc["mqbActByte2"] = mqbActByte2;
     doc["mqbActByte3"] = mqbActByte3;
@@ -407,7 +470,46 @@ void setupApiServer() {
         }
         {
           int wp = doc["wheelProtocol"] | (int)wheelProtocol;
-          wheelProtocol = (uint8_t)(wp == WHEEL_PROTOCOL_MQB ? WHEEL_PROTOCOL_MQB : WHEEL_PROTOCOL_PQ);
+          wheelProtocol = (uint8_t)((wp >= 0 && wp <= WHEEL_PROTOCOL_MAX) ? wp : WHEEL_PROTOCOL_PQ);
+        }
+        if (doc["customWheel"].is<JsonObject>()) {
+          JsonObject cw = doc["customWheel"];
+          CustomWheelConfig c;
+          portENTER_CRITICAL(&stateMux);
+          c = customWheel;
+          portEXIT_CRITICAL(&stateMux);
+          c.baud            = cw["baud"]            | c.baud;
+          c.checksum        = cw["checksum"]        | c.checksum;
+          c.decoder         = cw["decoder"]         | c.decoder;
+          c.codeByte        = cw["codeByte"]        | c.codeByte;
+          c.rollerByte      = cw["rollerByte"]      | c.rollerByte;
+          for (uint8_t i = 0; i < 2; i++) {
+            c.btnId[i]  = cw["btnId"][i]  | c.btnId[i];
+            c.btnLen[i] = cw["btnLen"][i] | c.btnLen[i];
+          }
+          c.lightId         = cw["lightId"]         | c.lightId;
+          c.lightLen        = cw["lightLen"]        | c.lightLen;
+          if (cw["lightData"].is<const char*>()) {
+            // "FF 00 00 ..." — up to 8 hex bytes, separators optional.
+            const char* p = cw["lightData"];
+            uint8_t n = 0;
+            uint8_t parsed[8] = {};
+            while (*p && n < 8) {
+              while (*p && !isxdigit((unsigned char)*p)) p++;
+              if (!*p) break;
+              char tmp[3] = {p[0], (char)(isxdigit((unsigned char)p[1]) ? p[1] : 0), 0};
+              parsed[n++] = (uint8_t)strtoul(tmp, nullptr, 16);
+              p += tmp[1] ? 2 : 1;
+            }
+            memcpy(c.lightData, parsed, sizeof(c.lightData));
+          }
+          c.lightBrightByte = cw["lightBrightByte"] | c.lightBrightByte;
+          c.lightBrightMax  = cw["lightBrightMax"]  | c.lightBrightMax;
+          c.lightEveryMs    = cw["lightEveryMs"]    | c.lightEveryMs;
+          portENTER_CRITICAL(&stateMux);
+          customWheel = c;
+          sanitiseCustomWheel();
+          portEXIT_CRITICAL(&stateMux);
         }
         mqbActByte1 = doc["mqbActByte1"] | (uint8_t)mqbActByte1;
         mqbActByte2 = doc["mqbActByte2"] | (uint8_t)mqbActByte2;
@@ -734,10 +836,15 @@ void setupApiServer() {
   });
 
   server.on("/api/log/clear", HTTP_POST, [](AsyncWebServerRequest* req) {
-    portENTER_CRITICAL(&stateMux);
-    logWriteIndex = 0;
-    memset(logBuffer, 0, sizeof(logBuffer));
-    portEXIT_CRITICAL(&stateMux);
+    clearLog();  // under the log's own lock (logLine() writes from other tasks)
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  // Ask the LIN1 task for a wheel detect / ID scan (about 1 s at 19200, up to
+  // ~3 s when nothing answers and it tries 9600 too); the result lands in
+  // /api/status "linScan" with a new seq.
+  server.on("/api/lin/scan", HTTP_POST, [](AsyncWebServerRequest* req) {
+    requestLinScan();
     req->send(200, "application/json", "{\"ok\":true}");
   });
 

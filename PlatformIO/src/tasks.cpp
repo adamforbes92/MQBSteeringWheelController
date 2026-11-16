@@ -218,6 +218,9 @@ static void steeringWheelLinTask(void* parameter) {
   TickType_t lastWakeTime = xTaskGetTickCount();
 
   while (1) {
+    // Wheel profile: LIN1 speed / format (19200 VW, 9600 Volvo, 8E1 K-bus...).
+    serviceWheelBus();
+
     // --- Light frame (0x0D) ---
     // Reading the chassis/BCM light frame itself now happens continuously in
     // chassisLinListenerTask() (serviceChassisLinBus()), not here — see that
@@ -240,18 +243,35 @@ static void steeringWheelLinTask(void* parameter) {
     // from sendButtonLINFrame() below (which is a no-op in that mode) ---
     steeringWheelLIN.handler();
     getButtonState();
-    if (linAccInId != 0) {
-      getAccButtonState();  // acc buttons merge into the same output pipeline
-    }
-    // Temperature is informational only — poll ~once per second to avoid adding
-    // a per-cycle blocking transaction that would slow button response.
     static uint8_t tempPollDivider = 0;
-    if (linTempInId != 0 && ++tempPollDivider >= 10) {
-      tempPollDivider = 0;
-      getTemperatureState();
+    if (wheelProtocol == WHEEL_PROTOCOL_AUDI) {
+      // An Audi wheel has no 0x0F / 0x3A frames (each poll would just time out
+      // and delay the cycle). Its other frame, 0x21, is polled ~1 s for the LIN
+      // Monitor instead.
+      if (++tempPollDivider >= 10) {
+        tempPollDivider = 0;
+        getAudiStatusState();
+      }
+    } else if (wheelIsVwLin2()) {
+      // VW's accessory / temperature frames — only VW LIN 2.x wheels have them
+      // (the other profiles would just time out here every cycle; on the BMW
+      // K-bus a poll would even transmit onto a bus we only listen to).
+      if (linAccInId != 0) {
+        getAccButtonState();  // acc buttons merge into the same output pipeline
+      }
+      // Temperature is informational only — poll ~once per second to avoid adding
+      // a per-cycle blocking transaction that would slow button response.
+      if (linTempInId != 0 && ++tempPollDivider >= 10) {
+        tempPollDivider = 0;
+        getTemperatureState();
+      }
     }
     sendButtonLINFrame();
     sendLatchedButtonOutputs();
+
+    // Wheel detect: a requested LIN1 ID scan, or an automatic one while the
+    // button frame isn't answering (see runLinScan() in LIN.cpp).
+    serviceLinScan();
 
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(linPause));
   }

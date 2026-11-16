@@ -147,7 +147,65 @@ inline bool isRollerDelta(int8_t d) { return d < 0 || d == 2 || d == 3; }
 // PQ wheels don't require this. See mqbActByte1..3.
 constexpr uint8_t WHEEL_PROTOCOL_PQ  = 0;
 constexpr uint8_t WHEEL_PROTOCOL_MQB = 1;
+// Audi wheels on LIN 1.3 (classic checksum): button frame 0x30, 6 data bytes,
+// not 0x0E. Decoded into an MQB-shaped frame on arrival (see decodeAudiFrame()
+// in LIN.cpp), so everything downstream (Learn, rows, rollers, chassis
+// shaping) treats it as an MQB wheel.
+constexpr uint8_t WHEEL_PROTOCOL_AUDI = 2;
+// Wheel profiles added in V1.12 (sources: docs/wheel-protocol-research.md).
+// Every one except NSF is decoded into an MQB-shaped frame, so the mapping
+// table, Learn, rollers and chassis shaping treat it as an MQB-family wheel.
+constexpr uint8_t WHEEL_PROTOCOL_NSF      = 3;  // VW Up! / Skoda Citigo / Seat Mii: PQ frame, 2-byte 0x0D
+constexpr uint8_t WHEEL_PROTOCOL_VOLVO_P1 = 4;  // V50/S40/C30/C70: 9600, classic, 0x20 x 4 bytes, bits
+constexpr uint8_t WHEEL_PROTOCOL_VOLVO_P3 = 5;  // V40 2012+, S60/V60/XC60 2011-18: 9600, classic, 0x30 + 0x20
+constexpr uint8_t WHEEL_PROTOCOL_BMW_KBUS = 6;  // E-series / Mini R5x MFL: K-bus 9600 8E1, listen only
+constexpr uint8_t WHEEL_PROTOCOL_CUSTOM   = 7;  // everything set by hand (customWheel)
+constexpr uint8_t WHEEL_PROTOCOL_MAX  = WHEEL_PROTOCOL_CUSTOM;
 extern volatile uint8_t wheelProtocol;
+
+// Frame-family of the selected wheel for the code paths that read the raw
+// LIN 2.x frame (rotary byte = PQ absolute position vs MQB delta, chassis
+// shaping): the NSF wheel sends a PQ frame; every decoded profile is MQB-shaped.
+inline bool wheelIsPqFamily()
+{
+  return wheelProtocol == WHEEL_PROTOCOL_PQ || wheelProtocol == WHEEL_PROTOCOL_NSF;
+}
+// Wheels that speak VW's own 0x0D / 0x0E / 0x0F / 0x3A set.
+inline bool wheelIsVwLin2()
+{
+  return wheelProtocol == WHEEL_PROTOCOL_PQ || wheelProtocol == WHEEL_PROTOCOL_MQB ||
+         wheelProtocol == WHEEL_PROTOCOL_NSF;
+}
+
+// ---- Custom wheel profile (WHEEL_PROTOCOL_CUSTOM) ----
+// Everything a LIN wheel can differ in, set from the UI, so a newly captured
+// wheel can be supported without a firmware update. Persisted as one NVS blob
+// ("custWheel"); `version` guards the layout.
+constexpr uint8_t WHEEL_CHK_ENHANCED = 0;   // LIN 2.x
+constexpr uint8_t WHEEL_CHK_CLASSIC  = 1;   // LIN 1.x
+constexpr uint8_t WHEEL_CHK_AUTO     = 2;   // whichever the wheel's answer validates under
+constexpr uint8_t WHEEL_DEC_CODE_BYTE = 0;  // one byte carries the button code (VW-style)
+constexpr uint8_t WHEEL_DEC_BITS      = 1;  // one bit per button (Volvo-style)
+constexpr uint8_t kCustomWheelVersion = 1;
+struct CustomWheelConfig {
+  uint8_t  version;
+  uint16_t baud;            // 9600 / 10417 / 19200
+  uint8_t  checksum;        // WHEEL_CHK_*
+  uint8_t  decoder;         // WHEEL_DEC_*
+  uint8_t  codeByte;        // WHEEL_DEC_CODE_BYTE: data byte holding the code (0-7)
+  uint8_t  rollerByte;      // WHEEL_DEC_CODE_BYTE: byte with a signed-nibble scroll movement, 0xFF none
+  uint8_t  btnId[2];        // button frames polled, 0xFF = unused
+  uint8_t  btnLen[2];       // their data lengths, 0 = find out from the answer
+  uint8_t  lightId;         // master frame sent to the wheel (backlight / wake), 0xFF none
+  uint8_t  lightLen;        // 1-8
+  uint8_t  lightData[8];    // its bytes
+  uint8_t  lightBrightByte; // byte replaced by the current brightness, 0xFF none
+  uint8_t  lightBrightMax;  // value that byte takes at full brightness
+  uint16_t lightEveryMs;    // send interval (100-2000)
+};
+extern CustomWheelConfig customWheel;
+void resetCustomWheel();
+void sanitiseCustomWheel();  // clamp every field into range
 
 // MQB 0x0D backlight activation bytes 1..3 (byte 0 is live brightness). Known
 // working sets: older MQB = 0xFF/0x00/0x00; MQB Evo = 0x81/0x64/0x40.
@@ -256,6 +314,7 @@ extern LogEntry          logBuffer[kLogLineCount];
 extern volatile uint32_t logWriteIndex;  // monotonically increasing
 
 void logLine(const char* fmt, ...);
+void clearLog();
 
 // ---------------------------------------------------------------------------
 // CAN monitor — its own ring buffer, deliberately NOT the logLine() one. A

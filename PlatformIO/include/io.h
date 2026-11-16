@@ -14,5 +14,8 @@ struct AuxPwmSnapshot {
 AuxPwmSnapshot takeAuxPwmSnapshot();
 
 void basicInit();
+// Reopen the wheel UART (Serial1) with another format/speed on the same pins
+// (Legacy-PCB swap honoured). Caller holds steeringWheelLinMutex.
+void reopenWheelUart(uint32_t baud, uint32_t config);
 void setupPins();
 void auxLightPWM();
