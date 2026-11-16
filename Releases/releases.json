@@ -1,11 +1,54 @@
 {
-  "product": "MQBSteeringWheelController",
-  "latest": "1.09",
+  "product": "MQBSteeringWheelController-main",
+  "latest": "1.12",
   "latestByBoard": {
-    "esp32": "1.09",
-    "esp32s3": "1.09"
+    "esp32": "1.12",
+    "esp32s3": "1.12"
   },
   "releases": [
+    {
+      "version": "1.12",
+      "channel": "stable",
+      "date": "2026-11-16",
+      "ota": true,
+      "notes": "New wheel support: VAG LIN 1.3 wheels (Audi A4/A8, early Golf 5 / Leon / Octavia 2), VW Up!/Citigo/Mii, Volvo P1 and P3, BMW/Mini K-bus (listen only) and a Custom profile. Wheel-detect scan suggests the right protocol. The web log now shows why a wheel is not answering, backlight frames and unknown frames. Setup has a 'Fit a new wheel' guide, From wheel / To car columns, hex codes and a better phone layout.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.12/firmware.bin",
+            "size": 1201840,
+            "sha256": "6ebf1b2b8d729f45cb3e52f634c2b7e0b89e0032e48e35fafbb3de8e20567b08"
+          },
+          "filesystem": {
+            "path": "V1.12/littlefs.bin",
+            "size": 655360,
+            "sha256": "9c0ca447b1f37930b20ca87221ed170ee9c8a976a2d1fafa29fb920def0c0626"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.12-S3/firmware.bin",
+            "size": 1180736,
+            "sha256": "5ceaeb2e340f9cf762d9af202ff14680ea90e7f996eb081cc3c065f27df341af"
+          },
+          "filesystem": {
+            "path": "V1.12-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "24c4d7b4ab45a1eaaf8bf9470f0adc320da9d3beccc18e82079e2d8b09afa990"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.12/firmware.bin",
+        "size": 1201840,
+        "sha256": "6ebf1b2b8d729f45cb3e52f634c2b7e0b89e0032e48e35fafbb3de8e20567b08"
+      },
+      "filesystem": {
+        "path": "V1.12/littlefs.bin",
+        "size": 655360,
+        "sha256": "9c0ca447b1f37930b20ca87221ed170ee9c8a976a2d1fafa29fb920def0c0626"
+      }
+    },
     {
       "version": "1.09",
       "channel": "stable",
