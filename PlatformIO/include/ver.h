@@ -5,6 +5,25 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.13 - LIN 1.3 wheel: byte 5 is a temperature, not buttons (17/11/2026).
+        From a customer's Audi A8 D3 wheel (docs/lin_monitor_log.csv-5..9.json):
+        0x30 d5 rose 46 -> 4A under a hair dryer and read FF (0D/0C/09/30/3A
+        while making contact) with the heated-rim sensor unplugged, so it is
+        the heater temperature. decodeAudiFrame() read its changed bits into
+        decoded byte 5, so each temperature step "pressed" a row learned on
+        byte 5 for 30 s until the rest caught up (the customer's stuck
+        "Previous"). Now only d0's high nibble and d3 are tracked; decoded byte
+        5 is always 0. The raw LIN Monitor line still shows d5. Web UI: a
+        byte-5 row on a decoded wheel now has the orange "unusual byte" outline,
+        to be re-learned or deleted. Same logs: the D3 heating button is d3 =
+        08 for as long as it is held (customer's label) - learnable as a byte-7
+        row, no change needed.
+        Diagnostics: new "Wheel Heater Sensor" card (LIN 1.3 profile only):
+        d5 raw, sensor state (FF = open / unplugged), min/max since boot, and
+        "raw - 68" in degrees C, MQB's published 0x3A rule, labelled as
+        unconfirmed for this wheel. Firmware: wheelTempRaw/Min/Max/Ms
+        (globals), set from every good 0x30 frame; /api/status sends
+        wheelTempRaw (+ Min/Max) while 0x30 frames are under 3 s old.
 V1.12 - Wheel profiles (16/11/2026). Wheel Protocol is now a profile: LIN1
         speed, checksum, frames polled, how buttons are coded and what is sent
         to the wheel. Sources for each: docs/wheel-protocol-research.md. NONE of

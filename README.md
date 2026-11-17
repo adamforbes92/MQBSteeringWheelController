@@ -73,7 +73,7 @@ If you want to purchase an assembled controller, you can do so here: [LIN MFSW C
 Designed for VAG multi-function steering wheels that report buttons over a **LIN slave
 response** and (optionally) carry paddle shifters and a LIN-dimmed backlight. Button IDs,
 LIN frame IDs and the CAN/GRA frame set are **car- and wheel-specific** — treat the
-shipped `buttonMappings[]` table (in [src/globals.cpp](PlatformIO/src/globals.cpp)) as a known-good
+shipped `buttonMappings[]` table (in [src/globals.cpp](src/globals.cpp)) as a known-good
 baseline and re-learn each button to suit your hardware. Both **PQ** and **MQB** are
 supported on **each side independently** — pick the wheel family in **Setup → Wheel
 Protocol** and the chassis/BCM family in **Setup → Chassis Protocol** (see
@@ -83,8 +83,8 @@ chassis choice, for fitting an MQB (or PQ) wheel to an ID.x car — see
 [MEB chassis](#meb-chassis-idx). If your wheel's buttons aren't recognised at all, watch
 the **LIN Monitor** while pressing them to find the frame and byte that change.
 
-> Frame IDs and calibration live in [include/defs.h](PlatformIO/include/defs.h) and
-> [src/globals.cpp](PlatformIO/src/globals.cpp). The resistive output values are tuned to your
+> Frame IDs and calibration live in [include/defs.h](include/defs.h) and
+> [src/globals.cpp](src/globals.cpp). The resistive output values are tuned to your
 > radio's resistor ladder — characterise them with the **Test Resistance** diagnostic or a datasheet for your radio.
 
 ---
@@ -133,7 +133,7 @@ from `lib_deps`, and the ESP32 platform (pioarduino) is downloaded on the first 
 
 ### Pin Map
 
-Defined in [include/defs.h](PlatformIO/include/defs.h):
+Defined in [include/defs.h](include/defs.h):
 
 | Group | Signal | DevKit GPIO | S3 board GPIO |
 | --- | --- | --- | --- |
@@ -172,6 +172,8 @@ The device breaks out to a single 12-way **MX23A12NF1** connector:
 | 10 | `OUTPUT1` | High-side driver output |
 | 11 | — | Unused |
 | 12 | — | Unused |
+
+**Installation & Assembly Manual:** [docs/INSTALLATION.md](docs/INSTALLATION.md) (print-ready PDF: [docs/MFSW-Controller-Installation-Manual.pdf](docs/MFSW-Controller-Installation-Manual.pdf)): making up the MX23A plug, wiring it into the car, and setting up a new wheel step by step.
 
 ---
 
@@ -376,7 +378,7 @@ Atlas buttons, i.e. the **Custom** preset with `F9 FF FF`.
 bytes), plus `0x21` (PID `61`, 2 bytes). The column module publishes `0x01` (PID `C1`, 2
 bytes) instead of VW's `0x0D`. These aren't Audi-only; the same frames come from:
 
-- a customer's **Audi A8** wheel (capture 16/11/2026);
+- a customer's **Audi A8** wheel (capture 16/11/2026), and an **A8 D3** wheel (logs 17/11/2026, `docs/lin_monitor_log.csv*.json`);
 - an **Audi A4 2013** wheel ([Arduino forum thread](https://forum.arduino.cc/t/audi-steering-wheel-lin-bus-reading/934599); its dumps carry PIDs `C1` / `61` / `F0`);
 - early **PQ35** wheels: Leon 1P `1P0 959 542` and Octavia 2 `3C0 959 542` on a LIN 1.3 J527 `1K0 953 549 BP` ([katzenberger/vag-mfsw-lin-bus-protocol](https://github.com/katzenberger/vag-mfsw-lin-bus-protocol), Saleae captures).
 
@@ -389,9 +391,9 @@ three wheels above have been captured.
 | 0 | `0x` | `Fx` | `0x` | low nibble: counter, +1 every poll |
 | 1 | `x0` | `x0` | `80 10 20 30 4A 5A 60 70` | follows the counter (never a button) |
 | 2 | `00` | `00` | `00` | **button code**. PQ35 Leon `1E 2A 1D 01 02 06 03 07`, Octavia `04 2B 05 50 02 06 03 07` (the codes the car puts on radio CAN `0x5C1`); A4 `08` mute, `04` voice, `80` select press, `01` mode; two buttons at once = `00` |
-| 3 | `00` | `34` | `00` | constant at rest; PQ35 horn sets `04` |
+| 3 | `00` | `34` | `00` | constant at rest; PQ35 horn sets `04`; A8 D3 heating button sets `08` for as long as it is held |
 | 4 | `00` | `00` | `00` | two signed 4-bit roller movements. A8: high nibble `1`–`6`, back to `0`. A4: `10` / `F0` vol up / down, `01` / `0F` selector up / down |
-| 5 | `3F` | `FF` | `00` | constant at rest |
+| 5 | `3F` (D3 `46`–`4B`) | `FF` | `00` | **heated-rim temperature**, not a button. A8 D3: rose `46` → `4A` under a hair dryer, read `FF` with the heating sensor unplugged (`0D`/`0C`/`09`/`30`/`3A` while it made contact). A4 `FF` is presumably no sensor fitted |
 
 `0x21` byte 1 is a layout ID on PQ35 (`22` Leon, `33` Octavia, `03` right pod only, `30` left
 pod only, `00` none). The A8 (`23 01`) and A4 (`64 01`) both have `01` there.
@@ -404,12 +406,13 @@ wheel:
 | 1 | byte 2's button code as the wheel sends it, or `F1` / `F2` while the byte 4 high / low roller moves (`+` up, `−` down) |
 | 3 | roller movement, otherwise the press stage (1, then 4/5/6 at 0.8/2/3 s held, timed by the firmware because these wheels don't report it) |
 | 7 | bits of byte 3 that differ from rest (PQ35 horn → `04`), like VW's horn byte |
-| 5 / 2 | bits of byte 5 / byte 0's high nibble that differ from rest |
+| 2 | bits of byte 0's high nibble that differ from rest |
+| 5 | always `0`: byte 5 is a temperature (shown live on **Diagnostics → Wheel Heater Sensor**) (up to V1.12 its changed bits were decoded here, so every temperature step "pressed" a row learned on byte 5 for 30 s) |
 
 "Rest" is the first good frame. A bit that stays changed for 30 s becomes the new rest state,
 which recovers from a button held at power-up. Scroll rows, the Scroll wizard, long-press
 rows and cross-family shaping for a PQ chassis all work unchanged. A code with no matching
-row is **not** passed to the car, and neither are bytes 2/5/7. The controller sends `0x01` =
+row is **not** passed to the car, and neither are bytes 2/7. The controller sends `0x01` =
 `50 03` (the PQ35 J527's ignition-on value; an A4 B8 car sends `00 FF`, so the payload isn't
 universal) in place of `0x0D`, and polls `0x21` about once a second (logged when it changes)
 in place of `0x0F` / `0x3A`. The Dashboard's *LIN in* shows the decoded frame; the LIN
@@ -417,7 +420,8 @@ Monitor shows the raw `0x30` bytes.
 
 Still unknown:
 
-- **Which A8 control is which.** The capture has no annotations.
+- **Which A8 control is which.** The 16/11 capture has no annotations. On the D3, the heating
+  button is byte 3 `08` (the customer's label); the rest are still to be logged.
 - **Backlight.** On B7/B8-era Audi (A4 B8, A5 8T, Q5 8R) the workshop pinouts show the
   button lighting on a separate terminal-58s PWM wire (column module socket B pin 11), not a
   LIN frame, and the tiptronic paddles hardwired (pins 7 / 10 / 12). On the A8 D3 and A3 8P
@@ -559,7 +563,7 @@ Learn mode captures live values from the bus into a specific field:
   buttons (byte 1), **paddles** (byte 6) and the **horn** (byte 7) are all captured with their
   correct byte position and value. Learn windows time out after 5 seconds. A From wheel cell
   with an orange outline matches an unusual frame byte (anything but the button byte, 6 or 7,
-  plus 2 and 5 on a LIN 1.3 wheel), usually a mis-learn; hover it to see the byte. Up to V1.10
+  plus 2 on a LIN 1.3 wheel), usually a mis-learn; hover it to see the byte. Up to V1.10
   every normally learned button showed that outline by mistake.
 - **Scroll wheels (rollers)** — a roller sends **one code whichever way it turns**, with the
   direction and number of clicks in the scroll byte (byte 3), so it needs two rows: *Scroll up*
@@ -833,11 +837,15 @@ A power-cycle (ignition off/on) brings Wi-Fi back.
 
 ## Version History
 
-The firmware version (`FW_VERSION` in [include/defs.h](PlatformIO/include/defs.h)) is shown on the
+The firmware version (`FW_VERSION` in [include/defs.h](include/defs.h)) is shown on the
 OTA tab. The full history lives in
-[include/ver.h](PlatformIO/include/ver.h):
+[include/ver.h](include/ver.h):
 
 ```
+V1.13 — VAG LIN 1.3 wheel: byte 5 of 0x30 is the heated rim's temperature (A8 D3 logs), so
+        it is no longer decoded as button bits — a temperature step used to "press" a row
+        learned on byte 5 for 30 s; such rows are now outlined orange to re-learn;
+        Diagnostics "Wheel Heater Sensor" card shows it live (raw, unplugged, min/max)
 V1.12 — Wheel profiles: Wheel Protocol picks a profile (bus speed, checksum, frames, button
         coding, frame sent to the wheel). New: VW Up! / Citigo / Mii (2-byte 0x0D),
         Volvo P1 and P3 (9600 baud), BMW E-series / Mini K-bus (listen only), and a

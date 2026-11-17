@@ -1466,6 +1466,12 @@ static int pressedMappingIndex(const uint8_t* frame)
 //
 //   customer A8 (16/11/2026)  idle  02 10 00 00 00 3F
 //                             only change seen: d4 = 10/20/30/40/60, back to 00
+//   customer A8 D3 (17/11/2026, docs/lin_monitor_log.csv-5..9.json)
+//                             idle  0x 0x 00 00 00 46..4B
+//                             heating button held: d3 = 08 for as long as held
+//                             d5 rose 46 -> 4A under a hair dryer, read FF
+//                             (and 0D/0C/09/30/3A on contact) with the heating
+//                             sensor unplugged: the heater temperature
 //   Audi A4 2013 (Arduino forum thread 934599)  idle FB B0 00 34 00 FF
 //                             d2 = 08 mute, 04 voice, 80 select press, 01 mode
 //                             d4 = 10 / F0 vol up/down, 01 / 0F selector up/down
@@ -1482,9 +1488,13 @@ static int pressedMappingIndex(const uint8_t* frame)
 //   d0 low nibble, d1          counter-driven, never a button (d1's low nibble
 //                              toggles with the counter on PQ35)
 //   d2                         the wheel's own button code, 0 at rest
-//   d3, d5, d0 high nibble     constant per wheel at rest (A8 00/3F/0, A4
-//                              34/FF/F, PQ35 00/00/0); the horn is in d3
+//   d3, d0 high nibble         constant per wheel at rest (A8 00/0, A4 34/F,
+//                              PQ35 00/0); the horn (PQ35) and the heating
+//                              button (A8 D3, 0x08) are in d3
 //   d4                         two signed 4-bit roller movements
+//   d5                         heated-rim temperature sensor (A8 D3: 46..4B
+//                              warm, FF unplugged; A4 FF = presumably no sensor;
+//                              PQ35 00) — never a button, so not decoded
 //
 // Decoded into an MQB-shaped frame so Learn, rollers, trigger filters and
 // chassis shaping all work on it unchanged:
@@ -1495,36 +1505,39 @@ static int pressedMappingIndex(const uint8_t* frame)
 //   byte 2  bits of d0's high nibble that differ from rest
 //   byte 3  roller movement (signed nibble), else press stage
 //   byte 4  0x31
-//   byte 5  bits of d5 that differ from rest
+//   byte 5  0 (d5 is a temperature, see above)
 //   byte 7  bits of d3 that differ from rest (PQ35 horn: 0x04), like VW's horn byte
 //
-// Bytes 2/5/7 are learned like paddles/horn are on a VW wheel (Learn records
+// Bytes 2/7 are learned like paddles/horn are on a VW wheel (Learn records
 // the byte it came from). Which A8 control is which is NOT known — the capture
 // carries no annotations — so nothing here names one.
 // ---------------------------------------------------------------------------
 constexpr uint8_t kLin13CodeRollerHi = 0xF1;
 constexpr uint8_t kLin13CodeRollerLo = 0xF2;
-// "Pressed" for d0/d3/d5 means "differs from rest", rest taken from the first
+// "Pressed" for d0/d3 means "differs from rest", rest taken from the first
 // good frame. A bit that stays changed this long is the real resting state
 // (e.g. a button held at power-up).
 constexpr uint32_t kLin13RestRelearnMs = 30000;
 
 static void decodeAudiFrame(const uint8_t* raw, uint8_t* out)
 {
-  static uint8_t  rest[3]        = {};  // d0 high nibble, d3, d5
+  // d0 high nibble and d3 only. d5 is the heater temperature (see above): read
+  // as button bits it "pressed" whatever row was learned on byte 5 for 30 s at
+  // every temperature step, until the rest below caught up (customer D3).
+  static uint8_t  rest[2]        = {};
   static bool     haveRest       = false;
-  static uint32_t differSince[3] = {};
+  static uint32_t differSince[2] = {};
   static uint8_t  lastCode       = 0;
   static uint32_t pressStartMs   = 0;
 
   const uint32_t now = millis();
-  const uint8_t cur[3] = {(uint8_t)(raw[0] & 0xF0), raw[3], raw[5]};
+  const uint8_t cur[2] = {(uint8_t)(raw[0] & 0xF0), raw[3]};
   if (!haveRest)
   {
     memcpy(rest, cur, sizeof(rest));
     haveRest = true;
   }
-  for (uint8_t i = 0; i < 3; i++)
+  for (uint8_t i = 0; i < 2; i++)
   {
     if (cur[i] == rest[i])
     {
@@ -1536,7 +1549,7 @@ static void decodeAudiFrame(const uint8_t* raw, uint8_t* out)
     }
     else if (now - differSince[i] >= kLin13RestRelearnMs)
     {
-      static const uint8_t kRestByte[3] = {0, 3, 5};
+      static const uint8_t kRestByte[2] = {0, 3};
       logLine("[SW] LIN 1.3 wheel: byte %u rest %02X -> %02X", (unsigned)kRestByte[i], rest[i], cur[i]);
       rest[i] = cur[i];
       differSince[i] = 0;
@@ -1575,8 +1588,7 @@ static void decodeAudiFrame(const uint8_t* raw, uint8_t* out)
   out[0] = (uint8_t)(0x80 | (raw[0] & 0x0F));
   out[2] = (uint8_t)((cur[0] ^ rest[0]) >> 4);
   out[4] = 0x31;
-  out[5] = (uint8_t)(cur[2] ^ rest[2]);
-  out[7] = (uint8_t)(cur[1] ^ rest[1]);
+  out[7] = (uint8_t)(cur[1] ^ rest[1]);  // out[5] stays 0: d5 is a temperature
   const uint8_t bi = (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
   out[bi] = code;
   if (linRotaryByteIndex < 8 && linRotaryByteIndex != bi)
@@ -2410,6 +2422,16 @@ void getButtonState()
       if (audi)
       {
         decodeAudiFrame(audiRaw, recvButtonData);
+        // Byte 5 = heated-rim temperature (see decodeAudiFrame()), for the
+        // Diagnostics "Wheel Heater Sensor" card. FF = sensor open / unplugged.
+        const uint8_t t = audiRaw[5];
+        wheelTempRaw = t;
+        if (t != 0xFF)
+        {
+          if (t < wheelTempMin) wheelTempMin = t;
+          if (t > wheelTempMax) wheelTempMax = t;
+        }
+        wheelTempMs = millis() | 1U;  // never 0 once seen
       }
     }
   }

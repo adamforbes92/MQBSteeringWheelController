@@ -642,9 +642,12 @@ function srcByteHint(row) {
 function srcByteSuspect(row) {
   const sb = num(row.sourceByte);
   if (sb === 0 || sb === defaultButtonByte() || sb === 6 || sb === 7) return false;
-  // A LIN 1.3 wheel's decoded frame also carries learnable bits in bytes 2
-  // and 5 (horn / other changed bits), so those are legitimate there.
-  if (wheelIsDecoded() && (sb === 2 || sb === 5)) return false;
+  // A LIN 1.3 wheel's decoded frame also carries learnable bits in byte 2
+  // (changed bits of its byte 0), so that's legitimate there. Byte 5 was too
+  // up to V1.12, but on the A8 D3 it is the heater's temperature: a row
+  // learned there was a temperature step, not a button, so it now shows as
+  // unusual (orange) to be re-learned or deleted.
+  if (wheelIsDecoded() && sb === 2) return false;
   return true;
 }
 
@@ -1299,6 +1302,7 @@ async function loadStatus() {
     setText("backlightState", s.backlightState || (s.backlightOn ? "ON" : "OFF"));
     setText("backlightPercent", `${Number(s.backlightPercent || 0)}%`);
     setText("bcmLightPercent", s.bcmLightAvailable ? `${Number(s.bcmLightPercent || 0)}%` : "N/A");
+    renderWheelTemp(s);
     const auxOnUs  = Number(s.auxOnTimeUs || 0);
     const auxPerUs = Number(s.auxPeriodUs  || 0);
     const auxDutyPc = auxPerUs > 0 ? ((auxOnUs / auxPerUs) * 100).toFixed(1) : "--";
@@ -1924,6 +1928,32 @@ function hex2(v) {
 
 function hex3(v) {
   return Number(v).toString(16).toUpperCase().padStart(3, "0");
+}
+
+// Diagnostics "Wheel Heater Sensor": a VAG LIN 1.3 wheel's 0x30 byte 5 (the
+// heated rim's temperature, raw). Shown only on that profile; the firmware
+// sends wheelTempRaw only while 0x30 frames are arriving. The degree figure
+// borrows MQB's 0x3A rule (raw - 68), which nobody has confirmed for these
+// wheels, so it's labelled as such in the page.
+function renderWheelTemp(s) {
+  const card = document.getElementById("wheelTempCard");
+  if (!card) return;
+  const lin13 = document.getElementById("wheelProtocol").value === "2";
+  card.style.display = lin13 ? "" : "none";
+  if (!lin13) return;
+  const h = (v) => v.toString(16).toUpperCase().padStart(2, "0");
+  if (typeof s.wheelTempRaw !== "number") {
+    setText("wheelTempRaw", "--");
+    setText("wheelTempState", "No 0x30 frames");
+    setText("wheelTempEstimate", "--");
+  } else {
+    const raw = s.wheelTempRaw;
+    setText("wheelTempRaw", `${h(raw)} (${raw})`);
+    setText("wheelTempState", raw === 0xFF ? "Open / unplugged" : "Connected");
+    setText("wheelTempEstimate", raw === 0xFF ? "--" : `${raw - 68} °C`);
+  }
+  setText("wheelTempRange", typeof s.wheelTempMin === "number"
+    ? `${h(s.wheelTempMin)} / ${h(s.wheelTempMax)}` : "--");
 }
 
 function setText(id, text) {

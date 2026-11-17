@@ -169,6 +169,10 @@ uint8_t lastAccInFrame[8] = {0};
 uint8_t lastTempInFrame[8] = {0};
 uint8_t lastAccInLen = 0;
 uint8_t lastTempInLen = 0;
+volatile uint8_t  wheelTempRaw = 0;
+volatile uint8_t  wheelTempMin = 0xFF;
+volatile uint8_t  wheelTempMax = 0x00;
+volatile uint32_t wheelTempMs  = 0;
 
 volatile bool learnActive = false;
 volatile uint8_t learnTarget = LEARN_NONE;

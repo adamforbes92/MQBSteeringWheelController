@@ -1,11 +1,54 @@
 {
-  "product": "MQBSteeringWheelController-main",
-  "latest": "1.12",
+  "product": "MQBSteeringWheelController",
+  "latest": "1.13",
   "latestByBoard": {
-    "esp32": "1.12",
-    "esp32s3": "1.12"
+    "esp32": "1.13",
+    "esp32s3": "1.13"
   },
   "releases": [
+    {
+      "version": "1.13",
+      "channel": "stable",
+      "date": "2026-11-17",
+      "ota": true,
+      "notes": "VAG LIN 1.3 wheels (Audi A8 D3 etc.): byte 5 is the heated rim's temperature, so it no longer acts as a button press (it made a learned button fire on its own). New Diagnostics card shows the heater sensor live. Re-learn any button outlined orange.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.13/firmware.bin",
+            "size": 1202112,
+            "sha256": "5b30fbf8d0284e0e3ee95c41fce8b6eae54927c5b9d0cead5552a6cf1efef4ca"
+          },
+          "filesystem": {
+            "path": "V1.13/littlefs.bin",
+            "size": 655360,
+            "sha256": "69cc6f23f9801dcb10184349162d4bd6e5f329f1c2dc3fd41822de18969ced54"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.13-S3/firmware.bin",
+            "size": 1181008,
+            "sha256": "9b520b84039c5e9080c77e31d43d83b5b5fc1a2887f7dedc9d3b5e626b273e4c"
+          },
+          "filesystem": {
+            "path": "V1.13-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "0747b04e2c3bbcb53abf47634e69e42b1f23f9512c2fc5d517c84a31afe51861"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.13/firmware.bin",
+        "size": 1202112,
+        "sha256": "5b30fbf8d0284e0e3ee95c41fce8b6eae54927c5b9d0cead5552a6cf1efef4ca"
+      },
+      "filesystem": {
+        "path": "V1.13/littlefs.bin",
+        "size": 655360,
+        "sha256": "69cc6f23f9801dcb10184349162d4bd6e5f329f1c2dc3fd41822de18969ced54"
+      }
+    },
     {
       "version": "1.12",
       "channel": "stable",

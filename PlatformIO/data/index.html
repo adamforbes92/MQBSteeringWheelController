@@ -8,7 +8,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="style.css?v=1.12">
+  <link rel="stylesheet" href="style.css?v=1.13">
 </head>
 
 <body>
@@ -575,6 +575,32 @@
         </div>
       </article>
 
+      <article class="card" id="wheelTempCard" style="display:none">
+        <h2>Wheel Heater Sensor</h2>
+        <div class="grid-3">
+          <div class="tile">
+            <div class="label">Raw (0x30 byte 5)</div>
+            <div id="wheelTempRaw" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">Sensor</div>
+            <div id="wheelTempState" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">Since boot (min / max)</div>
+            <div id="wheelTempRange" class="value">--</div>
+          </div>
+          <div class="tile">
+            <div class="label">If raw &minus; 68 (MQB 0x3A scale)</div>
+            <div id="wheelTempEstimate" class="value">--</div>
+          </div>
+        </div>
+        <p class="hint">The heated rim's temperature sensor as the wheel reports it: higher is warmer,
+          <code>FF</code> means the sensor is open or unplugged. Its scale isn't known yet. The last tile
+          applies the scale published for VW's MQB temperature frame, which may not hold for this wheel;
+          compare it with a thermometer on the rim.</p>
+      </article>
+
       <article class="card">
         <h2>High-Side MOSFET (Pin 21)</h2>
         <div class="form-grid">
@@ -805,8 +831,8 @@
     </section>
   </main>
 
-  <script src="app.js?v=1.12"></script>
-  <script src="ota.js?v=1.12"></script>
+  <script src="app.js?v=1.13"></script>
+  <script src="ota.js?v=1.13"></script>
 </body>
 
 </html>
