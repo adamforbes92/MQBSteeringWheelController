@@ -260,14 +260,22 @@ extern uint8_t lastTempInFrame[8];
 extern uint8_t lastAccInLen;
 extern uint8_t lastTempInLen;
 
-// VAG LIN 1.3 wheel: frame 0x30 byte 5, the heated rim's temperature sensor
-// (A8 D3: rose under a hair dryer, FF with the sensor unplugged). Raw value
-// only: its scale to degrees isn't known yet. Min/max are since boot and leave
-// out FF. wheelTempMs = millis() of the last good frame, 0 = none yet.
+// Heated-wheel temperature, raw, for the Diagnostics "Wheel Heater Sensor"
+// card. Sources: a VAG LIN 1.3 wheel's 0x30 byte 5 (A8 D3: rose under a hair
+// dryer, FF with the sensor unplugged) or a VW wheel's 0x3A byte 0 (RS6 C6:
+// rose with the heater on). Both read about 0x46 in a 21 C room. Min/max are
+// since boot and leave out FF. wheelTempMs = millis() of the last good frame,
+// 0 = none yet. wheelHeaterByte = 0x3A byte 1 (RS6: FE while heating).
+constexpr uint8_t WHEEL_TEMP_SRC_NONE  = 0;
+constexpr uint8_t WHEEL_TEMP_SRC_LIN13 = 1;  // 0x30 byte 5
+constexpr uint8_t WHEEL_TEMP_SRC_0X3A  = 2;  // 0x3A byte 0
 extern volatile uint8_t  wheelTempRaw;
 extern volatile uint8_t  wheelTempMin;
 extern volatile uint8_t  wheelTempMax;
+extern volatile uint8_t  wheelTempSrc;
+extern volatile uint8_t  wheelHeaterByte;
 extern volatile uint32_t wheelTempMs;
+void noteWheelTemp(uint8_t raw, uint8_t src);
 
 extern volatile bool learnActive;
 extern volatile uint8_t learnTarget;

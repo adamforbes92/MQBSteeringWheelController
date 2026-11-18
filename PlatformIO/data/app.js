@@ -1930,27 +1930,39 @@ function hex3(v) {
   return Number(v).toString(16).toUpperCase().padStart(3, "0");
 }
 
-// Diagnostics "Wheel Heater Sensor": a VAG LIN 1.3 wheel's 0x30 byte 5 (the
-// heated rim's temperature, raw). Shown only on that profile; the firmware
-// sends wheelTempRaw only while 0x30 frames are arriving. The degree figure
-// borrows MQB's 0x3A rule (raw - 68), which nobody has confirmed for these
-// wheels, so it's labelled as such in the page.
+// Diagnostics "Wheel Heater Sensor": the heated rim's temperature as the wheel
+// reports it — a VAG LIN 1.3 wheel's 0x30 byte 5 (wheelTempSrc 1) or a VW
+// wheel's 0x3A byte 0 (wheelTempSrc 2). The firmware sends it only while that
+// frame is fresh. Shown on the LIN 1.3 profile always, on others once a wheel
+// reports a temperature. The degree figure is raw - 49: a single reference
+// point (Mark's A8 D3 and RS6 C6 wheels both read about 0x46 in a 21 C room;
+// MQB's published raw - 68 put them at 2 C), with 1 C per step assumed.
+const WHEEL_TEMP_OFFSET = 49;
 function renderWheelTemp(s) {
   const card = document.getElementById("wheelTempCard");
   if (!card) return;
   const lin13 = document.getElementById("wheelProtocol").value === "2";
-  card.style.display = lin13 ? "" : "none";
-  if (!lin13) return;
+  const have = typeof s.wheelTempRaw === "number";
+  card.style.display = (lin13 || have) ? "" : "none";
+  if (!lin13 && !have) return;
   const h = (v) => v.toString(16).toUpperCase().padStart(2, "0");
-  if (typeof s.wheelTempRaw !== "number") {
+  const src = Number(s.wheelTempSrc || 0);
+  setText("wheelTempRawLabel", src === 2 ? "Raw (0x3A byte 0)" : "Raw (0x30 byte 5)");
+  const heaterTile = document.getElementById("wheelHeaterTile");
+  if (heaterTile) heaterTile.style.display = (have && src === 2) ? "" : "none";
+  if (!have) {
     setText("wheelTempRaw", "--");
-    setText("wheelTempState", "No 0x30 frames");
+    setText("wheelTempState", lin13 ? "No 0x30 frames" : "No data");
     setText("wheelTempEstimate", "--");
   } else {
     const raw = s.wheelTempRaw;
     setText("wheelTempRaw", `${h(raw)} (${raw})`);
     setText("wheelTempState", raw === 0xFF ? "Open / unplugged" : "Connected");
-    setText("wheelTempEstimate", raw === 0xFF ? "--" : `${raw - 68} °C`);
+    setText("wheelTempEstimate", raw === 0xFF ? "--" : `${raw - WHEEL_TEMP_OFFSET} °C`);
+    if (src === 2 && typeof s.wheelHeaterByte === "number") {
+      const hb = s.wheelHeaterByte;
+      setText("wheelHeaterByte", `${h(hb)}${hb === 0xFE ? " (heating seen)" : ""}`);
+    }
   }
   setText("wheelTempRange", typeof s.wheelTempMin === "number"
     ? `${h(s.wheelTempMin)} / ${h(s.wheelTempMax)}` : "--");

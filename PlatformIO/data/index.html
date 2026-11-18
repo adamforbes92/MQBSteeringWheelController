@@ -8,7 +8,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="style.css?v=1.13">
+  <link rel="stylesheet" href="style.css?v=1.14">
 </head>
 
 <body>
@@ -579,7 +579,7 @@
         <h2>Wheel Heater Sensor</h2>
         <div class="grid-3">
           <div class="tile">
-            <div class="label">Raw (0x30 byte 5)</div>
+            <div id="wheelTempRawLabel" class="label">Raw</div>
             <div id="wheelTempRaw" class="value">--</div>
           </div>
           <div class="tile">
@@ -591,14 +591,20 @@
             <div id="wheelTempRange" class="value">--</div>
           </div>
           <div class="tile">
-            <div class="label">If raw &minus; 68 (MQB 0x3A scale)</div>
+            <div class="label">Estimate (raw &minus; 49)</div>
             <div id="wheelTempEstimate" class="value">--</div>
           </div>
+          <div class="tile" id="wheelHeaterTile" style="display:none">
+            <div class="label">Heater flag (0x3A byte 1)</div>
+            <div id="wheelHeaterByte" class="value">--</div>
+          </div>
         </div>
-        <p class="hint">The heated rim's temperature sensor as the wheel reports it: higher is warmer,
-          <code>FF</code> means the sensor is open or unplugged. Its scale isn't known yet. The last tile
-          applies the scale published for VW's MQB temperature frame, which may not hold for this wheel;
-          compare it with a thermometer on the rim.</p>
+        <p class="hint">The heated rim's temperature sensor as the wheel reports it: a VAG LIN 1.3 wheel in
+          <code>0x30</code> byte 5, a VW wheel in <code>0x3A</code> byte 0. Higher is warmer; <code>FF</code>
+          means the sensor is open or unplugged. The estimate is set from one reference point only (two
+          wheels read about <code>46</code> in a 21&nbsp;&deg;C room) and assumes 1&nbsp;&deg;C per step; check
+          it against a thermometer on the rim. On the RS6 C6 wheel the heater flag read <code>FE</code> while
+          heating and flipped with each press of the heater button.</p>
       </article>
 
       <article class="card">
@@ -831,8 +837,8 @@
     </section>
   </main>
 
-  <script src="app.js?v=1.13"></script>
-  <script src="ota.js?v=1.13"></script>
+  <script src="app.js?v=1.14"></script>
+  <script src="ota.js?v=1.14"></script>
 </body>
 
 </html>

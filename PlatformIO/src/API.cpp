@@ -276,11 +276,14 @@ void setupApiServer() {
       if (bcmRaw > upperLightsLIN) bcmRaw = upperLightsLIN;
       doc["bcmLightPercent"] = upperLightsLIN == 0 ? 0 : (uint8_t)((bcmRaw * 100U) / upperLightsLIN);
     }
-    // LIN 1.3 wheel heater sensor (0x30 byte 5), only while frames are fresh.
+    // Heated-wheel temperature (LIN 1.3 0x30 byte 5, or VW 0x3A byte 0), only
+    // while that frame is fresh (0x3A is polled about once a second).
     {
       const uint32_t tMs = wheelTempMs;
-      if (tMs != 0 && wheelProtocol == WHEEL_PROTOCOL_AUDI && (millis() - tMs) < 3000) {
+      if (tMs != 0 && (millis() - tMs) < 3000) {
         doc["wheelTempRaw"] = wheelTempRaw;
+        doc["wheelTempSrc"] = wheelTempSrc;
+        if (wheelTempSrc == WHEEL_TEMP_SRC_0X3A) doc["wheelHeaterByte"] = wheelHeaterByte;
         if (wheelTempMin <= wheelTempMax) {
           doc["wheelTempMin"] = wheelTempMin;
           doc["wheelTempMax"] = wheelTempMax;

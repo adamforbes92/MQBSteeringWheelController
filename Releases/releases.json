@@ -1,11 +1,54 @@
 {
   "product": "MQBSteeringWheelController",
-  "latest": "1.13",
+  "latest": "1.14",
   "latestByBoard": {
-    "esp32": "1.13",
-    "esp32s3": "1.13"
+    "esp32": "1.14",
+    "esp32s3": "1.14"
   },
   "releases": [
+    {
+      "version": "1.14",
+      "channel": "stable",
+      "date": "2026-11-18",
+      "ota": true,
+      "notes": "Learn fix: a wheel frame that arrived late no longer makes Learn pick up a byte that never changes (that left a button such as Previous pressed all the time, or learned code 0x31). Re-learn or delete any button outlined orange. The Wheel Heater Sensor card now also shows VW wheels' temperature and heater flag.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.14/firmware.bin",
+            "size": 1202384,
+            "sha256": "f65921612783b7bb0c8c7bd415fc00b5bb87efdcc27852053bafe3564abe7454"
+          },
+          "filesystem": {
+            "path": "V1.14/littlefs.bin",
+            "size": 655360,
+            "sha256": "9ebc0f47fa94e5c7b0d76cd0dbf89dd80adc96ee43391c9588a6eb6819ad8868"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.14-S3/firmware.bin",
+            "size": 1181248,
+            "sha256": "64bffbb752e984a6dbdbb7ebe3152df6a9a7cc2231b9b299c676746d8999323a"
+          },
+          "filesystem": {
+            "path": "V1.14-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "cc841fc94eeb55e0f9cf64842707ee81b119cf269ceaa80bd5936510e565e7fa"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.14/firmware.bin",
+        "size": 1202384,
+        "sha256": "f65921612783b7bb0c8c7bd415fc00b5bb87efdcc27852053bafe3564abe7454"
+      },
+      "filesystem": {
+        "path": "V1.14/littlefs.bin",
+        "size": 655360,
+        "sha256": "9ebc0f47fa94e5c7b0d76cd0dbf89dd80adc96ee43391c9588a6eb6819ad8868"
+      }
+    },
     {
       "version": "1.13",
       "channel": "stable",

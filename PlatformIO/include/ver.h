@@ -5,6 +5,29 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.14 - Learn fix + VW heater temperature (18/11/2026). From Mark's RS6 C6
+        and A8 D3 logs (docs/lin_monitor_log.csv-2, 4, 10..12.json) and chat.
+        Learn: getButtonState() fed every poll to captureLearnedFromFrame(),
+        including failed ones, whose recvButtonData is zeroed. That reset each
+        constant byte's baseline to 0 ("a byte that returns to 0 is at rest"),
+        so the next good frame looked like a fresh press on it. Wheels that
+        answer late time out every few seconds, so it happened often: the RS6
+        C6 (VW 0x0E, byte 4 always 01) got "Previous" learned as byte 4 = 01,
+        which then matched every frame (log 2: btn id=0x01 byte 4 row=0) - the
+        customer's stuck Previous; on a LIN 1.3 wheel the decoded byte 4 filler
+        0x31 got learned ("sometimes it gets id 0x31"). Learn now only sees
+        error-free frames. Rows already learned that way keep the orange
+        "unusual byte" outline and need re-learning.
+        Heater temperature: noteWheelTemp() (globals) records raw / min / max /
+        source from LIN 1.3 0x30 byte 5 and now also VW 0x3A byte 0 (RS6: rose
+        4B -> 56 with the heater on); 0x3A byte 1 kept as wheelHeaterByte (RS6:
+        FE while heating, FF <-> FE as the heater button was pressed).
+        /api/status: wheelTempRaw/Src/Min/Max (+ wheelHeaterByte for 0x3A)
+        while fresh (< 3 s), any profile. UI card shows on LIN 1.3 or whenever
+        data arrives, labels its source, adds the heater-flag tile. Estimate
+        is now raw - 49: both wheels read about 0x46 in a 21 C room (customer),
+        where MQB's published raw - 68 gave 2 C and he saw 9 C at 21 C; still
+        one point, 1 C per step assumed.
 V1.13 - LIN 1.3 wheel: byte 5 is a temperature, not buttons (17/11/2026).
         From a customer's Audi A8 D3 wheel (docs/lin_monitor_log.csv-5..9.json):
         0x30 d5 rose 46 -> 4A under a hair dryer and read FF (0D/0C/09/30/3A

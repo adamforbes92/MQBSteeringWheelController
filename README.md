@@ -36,7 +36,7 @@ the S3) and the OTA tab only offers releases carrying images for the board it ru
 | LIN input (wheel) | Polls the steering-wheel LIN bus (default ID `0x0E`) for button IDs and paddle state at 19.2 kbit/s |
 | LIN light input | Reads chassis-bus dimming (default ID `0x0D`) to drive the wheel backlight |
 | Accessory buttons | Polls a second wheel frame (default ID `0x0F`) and feeds its buttons through the same mapping pipeline |
-| Temperature frame | Polls a wheel temperature frame (default ID `0x3A`) for display in the LIN monitor |
+| Temperature frame | Polls a wheel temperature frame (default ID `0x3A`) for the LIN monitor; on heated wheels byte 0 is the rim temperature and byte 1 a heater flag, shown on **Diagnostics → Wheel Heater Sensor** |
 | Configurable LIN IDs | All four incoming frame IDs are user-editable, so wheels using non-standard IDs are supported |
 | Wheel protocol | Selectable PQ / MQB wheel protocol; MQB wheels are enabled with a different backlight activation frame |
 | Chassis protocol | Independent PQ / MQB / MEB selector for the button frame sent to the chassis/BCM — any wheel↔chassis combination bridges (PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB, PQ/MQB wheel → MEB ID.x) |
@@ -498,7 +498,7 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.11** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.14** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -842,6 +842,10 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.14 — Learn fix: a wheel frame that failed (late answer, timeout) no longer feeds Learn, which
+        made constant bytes look like presses (an RS6 C6's byte 4 = 01 learned as Previous and
+        then "pressed" forever; 0x31 learned on LIN 1.3 wheels). Wheel Heater Sensor card also
+        shows VW wheels' 0x3A temperature + heater flag; estimate re-based to raw − 49
 V1.13 — VAG LIN 1.3 wheel: byte 5 of 0x30 is the heated rim's temperature (A8 D3 logs), so
         it is no longer decoded as button bits — a temperature step used to "press" a row
         learned on byte 5 for 30 s; such rows are now outlined orange to re-learn;

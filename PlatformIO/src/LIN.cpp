@@ -2424,14 +2424,7 @@ void getButtonState()
         decodeAudiFrame(audiRaw, recvButtonData);
         // Byte 5 = heated-rim temperature (see decodeAudiFrame()), for the
         // Diagnostics "Wheel Heater Sensor" card. FF = sensor open / unplugged.
-        const uint8_t t = audiRaw[5];
-        wheelTempRaw = t;
-        if (t != 0xFF)
-        {
-          if (t < wheelTempMin) wheelTempMin = t;
-          if (t > wheelTempMax) wheelTempMax = t;
-        }
-        wheelTempMs = millis() | 1U;  // never 0 once seen
+        noteWheelTemp(audiRaw[5], WHEEL_TEMP_SRC_LIN13);
       }
     }
   }
@@ -2476,8 +2469,14 @@ void getButtonState()
         learnBaselineReady = true;
       }
     }
-    else
+    else if (linErr == LIN_Master_Base::NO_ERROR)
     {
+      // Only intact frames. A failed poll leaves recvButtonData zeroed, and
+      // feeding that in made every constant byte "rest at 0" (see the reset in
+      // captureLearnedFromFrame()), so the next good frame looked like a fresh
+      // press on it: an RS6 wheel's byte 4 (always 01) was learned as Previous
+      // and then matched every frame; a LIN 1.3 wheel's decoded byte 4 (0x31)
+      // was learned as a button. Wheels that answer late time out often.
       captureLearnedFromFrame(recvButtonData);
     }
   }
@@ -3005,5 +3004,11 @@ void getTemperatureState()
   memcpy(lastTempInFrame, buf, sizeof(buf));
   lastTempInLen = sizeof(buf);
   portEXIT_CRITICAL(&stateMux);
+
+  // Heated VW wheels (RS6 C6 logs, docs/lin_monitor_log.csv-11/12.json): byte 0
+  // climbed 4B -> 56 with the heater on; byte 1 stayed FE while it was on and
+  // flipped FF <-> FE as its button was pressed. For the Diagnostics card.
+  noteWheelTemp(buf[0], WHEEL_TEMP_SRC_0X3A);
+  wheelHeaterByte = buf[1];
 }
 

@@ -172,7 +172,26 @@ uint8_t lastTempInLen = 0;
 volatile uint8_t  wheelTempRaw = 0;
 volatile uint8_t  wheelTempMin = 0xFF;
 volatile uint8_t  wheelTempMax = 0x00;
+volatile uint8_t  wheelTempSrc = WHEEL_TEMP_SRC_NONE;
+volatile uint8_t  wheelHeaterByte = 0xFF;
 volatile uint32_t wheelTempMs  = 0;
+
+void noteWheelTemp(uint8_t raw, uint8_t src)
+{
+  if (src != wheelTempSrc)  // another wheel / profile: start the range again
+  {
+    wheelTempMin = 0xFF;
+    wheelTempMax = 0x00;
+    wheelTempSrc = src;
+  }
+  wheelTempRaw = raw;
+  if (raw != 0xFF)
+  {
+    if (raw < wheelTempMin) wheelTempMin = raw;
+    if (raw > wheelTempMax) wheelTempMax = raw;
+  }
+  wheelTempMs = millis() | 1U;  // never 0 once seen
+}
 
 volatile bool learnActive = false;
 volatile uint8_t learnTarget = LEARN_NONE;
