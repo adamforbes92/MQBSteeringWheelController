@@ -5,6 +5,12 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.15 - Phone touch UI (22/11/2026). Shared touchui.js / touchui.css from
+        _SharedTheme copied into data/ and loaded before style.css / app.js:
+        no long-press copy / context menu (text boxes keep it), and scrolling
+        the page never moves a slider (a range only changes on a sideways
+        drag; touch-action: pan-y). No firmware logic change.
+
 V1.14 - Learn fix + VW heater temperature (18/11/2026). From Mark's RS6 C6
         and A8 D3 logs (docs/lin_monitor_log.csv-2, 4, 10..12.json) and chat.
         Learn: getButtonState() fed every poll to captureLearnedFromFrame(),

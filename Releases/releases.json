@@ -1,11 +1,54 @@
 {
-  "product": "MQBSteeringWheelController",
-  "latest": "1.14",
+  "product": "MQBSteeringWheelController-main",
+  "latest": "1.15",
   "latestByBoard": {
-    "esp32": "1.14",
-    "esp32s3": "1.14"
+    "esp32": "1.15",
+    "esp32s3": "1.15"
   },
   "releases": [
+    {
+      "version": "1.15",
+      "channel": "stable",
+      "date": "2026-11-22",
+      "ota": true,
+      "notes": "Phone web page: a long press no longer pops up the copy menu, and scrolling the page can no longer move a slider by accident.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.15/firmware.bin",
+            "size": 1202384,
+            "sha256": "f37eacde6ccc05ac33a56861ce45863373d2b868f4bdaceef1adc1cefbddffb4"
+          },
+          "filesystem": {
+            "path": "V1.15/littlefs.bin",
+            "size": 655360,
+            "sha256": "ed688eeae577e6dcf423fcf5d9ea240323049bf3c479246f94b883a1fe45b3bc"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.15-S3/firmware.bin",
+            "size": 1181248,
+            "sha256": "4ffde11c895973b8a886b55ffcc4cfcb1ee0ec3fb6324d0b0d452271c8338499"
+          },
+          "filesystem": {
+            "path": "V1.15-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "f3140e55060d4b0c7831e6b8415bfc77835b521b6f217cb62e127b1eaf0f1f7c"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.15/firmware.bin",
+        "size": 1202384,
+        "sha256": "f37eacde6ccc05ac33a56861ce45863373d2b868f4bdaceef1adc1cefbddffb4"
+      },
+      "filesystem": {
+        "path": "V1.15/littlefs.bin",
+        "size": 655360,
+        "sha256": "ed688eeae577e6dcf423fcf5d9ea240323049bf3c479246f94b883a1fe45b3bc"
+      }
+    },
     {
       "version": "1.14",
       "channel": "stable",

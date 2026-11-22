@@ -1,0 +1,38 @@
+/* touchui.css - goes with touchui.js. MASTER COPY: <Drive>:\My Drive\PlatformIO\_SharedTheme\
+   Colours come from the page's own --panel / --text / --accent where it has them. */
+
+/* --- no text highlight / copy menu on long press ------------------------- */
+body {
+  -webkit-user-select: none;    /* Safari / iPhone */
+  user-select: none;            /* every other browser */
+  -webkit-touch-callout: none;  /* iPhone: no copy / look-up menu on long press */
+}
+/* ...but keep it where you type, or might want to copy something out */
+input, textarea, select, pre, code, [contenteditable], .allow-select {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* --- sliders: an up / down swipe scrolls the page (touchui.js keeps the value) */
+input[type="range"] { touch-action: pan-y; }
+
+/* --- long press (attachLongPress): darkens while held, over --hold-ms ---- */
+.hold-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+.hold-press::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: rgba(0, 0, 0, .6); opacity: 0; pointer-events: none; transition: opacity .1s;
+}
+.hold-press.pressing::after { opacity: 1; transition: opacity var(--hold-ms, 550ms) linear; }
+
+/* --- draggable charts (attachCurveDrag) ---------------------------------- */
+.chart-drag { position: relative; }
+.chart-touch { position: absolute; inset: 0; touch-action: pan-y; cursor: grab; -webkit-tap-highlight-color: transparent; }
+.drag-bubble {
+  position: fixed; z-index: 1000; pointer-events: none; white-space: nowrap;
+  transform: translate(-50%, calc(-100% - 28px));
+  background: var(--panel, #161b22); color: var(--text, #e6edf3); border: 1px solid var(--accent, #00d9ff);
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+}
+.drag-bubble[hidden] { display: none; }

@@ -498,7 +498,7 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.14** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.15** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -842,6 +842,8 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.15 — phone touch UI: no long-press copy menu; scrolling the page never moves a slider
+        (shared touchui.js/css)
 V1.14 — Learn fix: a wheel frame that failed (late answer, timeout) no longer feeds Learn, which
         made constant bytes look like presses (an RS6 C6's byte 4 = 01 learned as Previous and
         then "pressed" forever; 0x31 learned on LIN 1.3 wheels). Wheel Heater Sensor card also
