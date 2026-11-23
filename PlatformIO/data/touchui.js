@@ -2,7 +2,7 @@
  *
  * MASTER COPY: <Drive>:\My Drive\PlatformIO\_SharedTheme\touchui.js (+ touchui.css)
  * Edit it there, then copy both files unchanged into each product's data/ (same as ota.js).
- * Based on OpenHaldex-C6 V11.00.12 (Expert PT cells + draggable charts). See README_TOUCHUI.md.
+ * Based on OpenHaldex-C6 V11.00.12 (Expert PT cells + draggable charts) + V11.00.14 (full-screen chart: sideways, pinch zoom). See README_TOUCHUI.md.
  *
  * Load before app.js:
  *   <link rel="stylesheet" href="touchui.css?v=<ver>">
@@ -162,8 +162,25 @@
   // once it has, touchmove is cancelled so the page stays put while you drag.
   //
   // The chart is the first <svg> or <canvas> in host. Coordinates are in its own
-  // units: SVG viewBox units, or canvas.width pixels (set opts.cssUnits for a canvas
-  // drawn in CSS pixels, e.g. one scaled with ctx.setTransform(devicePixelRatio...)).
+  // units: SVG viewBox units, or canvas.width / canvas.height pixels (set
+  // opts.cssUnits for a canvas drawn in CSS pixels, e.g. one scaled with
+  // ctx.setTransform(devicePixelRatio...)). An SVG that keeps its shape
+  // (preserveAspectRatio, the default) is letterboxed when its box isn't the
+  // viewBox's shape - full screen does that - so the drawing's real place on
+  // screen is worked out from the viewBox. A canvas fills its box (object-fit:
+  // contain is letterboxed the same way as an SVG).
+  //
+  // Full screen (OpenHaldex V11.00.12, rotate + zoom V11.00.14): a button in the
+  // chart's corner opens it over the whole window - a bigger chart = finer steps,
+  // easier picking. On a phone it also asks the browser for real full screen locked
+  // sideways (Android). Where that isn't possible (iPhone, rotation lock) and the
+  // phone is still upright, the chart is drawn turned 90° (chart-rotated) - turn
+  // the phone to the left to read it. In full screen two fingers pinch / pan and
+  // one finger on empty space pans once zoomed; the points work the same.
+  // Escape or the button closes it. On by default for an SVG chart (the viewBox
+  // scales it). A canvas chart has to redraw at the new size itself, so it is off
+  // unless opts.expand is true - then redraw in opts.onExpand (also called when
+  // the screen turns or resizes while it is open).
   // opts:
   //   pick(x, y, radius) -> node {value, locked} or null   (required)
   //   unitsPerStep(node) -> chart units the finger moves for one step of value (required;
@@ -176,6 +193,8 @@
   //   lockedText(node)   -> message for a locked point (shown with the page's showNotification)
   //   onLocked(node)     -> or handle a locked point yourself
   //   cssUnits           -> canvas only: coordinates in CSS pixels
+  //   expand             -> full-screen button (default: true for SVG, false for canvas)
+  //   onExpand(on)       -> after opening / closing / re-laying out full screen (a canvas chart redraws here)
   function attachCurveDrag(host, opts) {
     var per = opts.unitsPerStep || opts.unitsPerPct;
     var holdMs = opts.holdMs || HOLD_MS;
@@ -187,27 +206,188 @@
     overlay.addEventListener('contextmenu', function (event) { event.preventDefault(); }); // a long hold is ours
     host.appendChild(overlay);
 
-    var grab = null; // { node, x, y, k, timer, armed, cancelled, from, value }
+    var grab = null; // { node, x, y, lx, ly, k, timer, armed, cancelled, from, value }
     var frame = 0;
     var lastTouchMs = 0;
 
+    // Turned 90° (chart-rotated): touches arrive in screen coordinates, so the
+    // maths below works in the chart's own ("local") frame - its top-left corner,
+    // its x across, its y down.
+    var rotated = function () { return host.classList.contains('chart-rotated'); };
+    var toLocal = function (x, y) { return rotated() ? { x: y, y: window.innerWidth - x } : { x: x, y: y }; };
+    var rectToLocal = function (r) {
+      return rotated()
+        ? { left: r.top, top: window.innerWidth - r.right, width: r.height, height: r.width }
+        : { left: r.left, top: r.top, width: r.width, height: r.height };
+    };
+    var surface = function () { return host.querySelector('svg, canvas'); };
+    // what a pinch zoom scales: the SVG's layer (chartLayer) or the canvas itself
+    var zoomTarget = function () { return host.querySelector(':scope > .chart-svg') || host.querySelector(':scope > canvas'); };
+
+    // Where the drawing really is (local coordinates), and chart units per pixel
+    // across (kx) and down (ky). A pinch zoom is already in the rect.
     var surfaceBox = function () {
-      var el = host.querySelector('svg, canvas');
+      var el = surface();
       if (!el) return null;
-      var rect = el.getBoundingClientRect();
-      var width = rect.width;
+      var rect = rectToLocal(el.getBoundingClientRect());
+      if (!rect.width || !rect.height) return null;
+      var w, h, contain;
       if (el.tagName.toLowerCase() === 'svg') {
-        if (el.viewBox && el.viewBox.baseVal && el.viewBox.baseVal.width) width = el.viewBox.baseVal.width;
-      } else if (!opts.cssUnits) {
-        width = el.width;
+        var vb = el.viewBox && el.viewBox.baseVal;
+        w = vb && vb.width ? vb.width : rect.width;
+        h = vb && vb.height ? vb.height : rect.height;
+        contain = !/^\s*none/.test(el.getAttribute('preserveAspectRatio') || '');
+      } else if (opts.cssUnits) {
+        w = el.clientWidth || rect.width; // unzoomed CSS px
+        h = el.clientHeight || rect.height;
+        contain = false;
+      } else {
+        w = el.width || rect.width;
+        h = el.height || rect.height;
+        var fit = window.getComputedStyle(el).objectFit;
+        contain = fit === 'contain' || fit === 'scale-down';
       }
-      return { rect: rect, k: width / (rect.width || 1) }; // k = chart units per screen pixel
+      var sx = rect.width / w; // screen px per chart unit
+      var sy = rect.height / h;
+      if (contain) sx = sy = Math.min(sx, sy);
+      var left = rect.left + (rect.width - w * sx) / 2;
+      var top = rect.top + (rect.height - h * sy) / 2;
+      return { left: left, top: top, right: left + w * sx, bottom: top + h * sy, kx: 1 / sx, ky: 1 / sy };
     };
-    var offChart = function (x, y) {
-      var rect = host.getBoundingClientRect();
+    var offChart = function (x, y) { // local coordinates
+      var box = surfaceBox();
+      if (!box) return true;
       var margin = 10;
-      return x < rect.left - margin || x > rect.right + margin || y < rect.top - margin || y > rect.bottom + margin;
+      // zoomed in, the drawing runs past the screen: the screen edge is the limit
+      var vis = rectToLocal(host.getBoundingClientRect());
+      var left = Math.max(box.left, vis.left), right = Math.min(box.right, vis.left + vis.width);
+      var top = Math.max(box.top, vis.top), bottom = Math.min(box.bottom, vis.top + vis.height);
+      return x < left - margin || x > right + margin || y < top - margin || y > bottom + margin;
     };
+
+    // ----- full screen, sideways, pinch zoom -----
+    var isPhone = function () { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); };
+    var expanded = function () { return host.classList.contains('chart-expanded'); };
+    var view = { z: 1, tx: 0, ty: 0 }; // pinch zoom of the drawing (full screen only)
+    var gesture = null;                // { d0, z0, cx, cy } while pinching / panning
+    var ZOOM_MAX = 4;
+    var applyView = function () {
+      var target = zoomTarget();
+      if (!target) return;
+      target.style.transformOrigin = view.z === 1 ? '' : '0 0';
+      target.style.transform = view.z === 1 ? '' : 'translate(' + view.tx + 'px, ' + view.ty + 'px) scale(' + view.z + ')';
+    };
+    var resetView = function () { view = { z: 1, tx: 0, ty: 0 }; gesture = null; applyView(); };
+    var layout = function (notify) {
+      var rot = expanded() && isPhone() && window.innerHeight > window.innerWidth;
+      host.classList.toggle('chart-rotated', rot);
+      document.body.classList.toggle('chart-rotated', rot);
+      host.style.width = rot ? window.innerHeight + 'px' : '';
+      host.style.height = rot ? window.innerWidth + 'px' : '';
+      host.style.left = rot ? window.innerWidth + 'px' : '';
+      resetView();
+      if (notify && opts.onExpand) opts.onExpand(expanded());
+    };
+
+    if (opts.expand === undefined ? !!host.querySelector('svg') || !host.querySelector('canvas') : opts.expand) {
+      var expandBtn = document.createElement('button');
+      expandBtn.type = 'button';
+      expandBtn.className = 'chart-expand';
+      host.appendChild(expandBtn);
+
+      var openedFs = false; // this chart asked for browser full screen
+      var enterFullscreen = function () {
+        var el = document.documentElement;
+        var req = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (!isPhone() || !req || document.fullscreenElement || document.webkitFullscreenElement) return;
+        var locked = function () {
+          openedFs = true;
+          var lock = null;
+          try { if (screen.orientation && screen.orientation.lock) lock = screen.orientation.lock('landscape'); } catch (e) { /* none */ }
+          if (lock && lock.then) lock.then(function () { layout(true); }, function () { layout(true); }); // no lock: CSS turns it
+          else layout(true);
+        };
+        try {
+          var p = req.call(el, { navigationUI: 'hide' }); // must start inside the tap
+          if (p && p.then) p.then(locked, function () { /* not allowed: the CSS rotation still applies */ });
+          else locked();
+        } catch (e) { /* not allowed */ }
+      };
+      var leaveFullscreen = function () {
+        try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) { /* none */ }
+        if (!openedFs) return;
+        openedFs = false;
+        var exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit && (document.fullscreenElement || document.webkitFullscreenElement)) {
+          try { var p = exit.call(document); if (p && p.catch) p.catch(function () {}); } catch (e) { /* already out */ }
+        }
+      };
+      var setExpanded = function (on, notify) {
+        host.classList.toggle('chart-expanded', on);
+        document.body.classList.toggle('chart-open', on);
+        expandBtn.textContent = on ? '✕' : '⤢'; // ✕ / ⤢
+        expandBtn.setAttribute('aria-label', on ? 'Close full screen' : 'Full screen');
+        if (!on) leaveFullscreen();
+        layout(notify);
+      };
+      setExpanded(false, false);
+      expandBtn.addEventListener('click', function () {
+        var on = !expanded();
+        setExpanded(on, true);
+        if (on) enterFullscreen();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && expanded()) setExpanded(false, true);
+      });
+      // Android back / swipe out of browser full screen: close the chart too
+      ['fullscreenchange', 'webkitfullscreenchange'].forEach(function (name) {
+        document.addEventListener(name, function () {
+          if (!document.fullscreenElement && !document.webkitFullscreenElement && openedFs) {
+            openedFs = false;
+            if (expanded()) setExpanded(false, true);
+          } else if (expanded()) layout(true);
+        });
+      });
+      window.addEventListener('resize', function () { if (expanded()) layout(true); });
+      window.addEventListener('orientationchange', function () { if (expanded()) setTimeout(function () { layout(true); }, 250); });
+    }
+
+    // Pinch / pan: keep the drawing point that was under the fingers under them.
+    // Local coordinates; the zoomed element's own top-left (inside the padding) is its origin.
+    var layerOrigin = function () {
+      var t = zoomTarget();
+      return t ? { x: t.offsetLeft, y: t.offsetTop, w: t.offsetWidth, h: t.offsetHeight } : null;
+    };
+    var touchesLocal = function (touches) {
+      return Array.prototype.slice.call(touches, 0, 2).map(function (t) { return toLocal(t.clientX, t.clientY); });
+    };
+    var mid = function (pts) { return pts.length > 1 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : pts[0]; };
+    var gestureStart = function (pts) {
+      var o = layerOrigin();
+      if (!o || !pts.length) return;
+      var m = mid(pts);
+      gesture = {
+        d0: pts.length > 1 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0,
+        z0: view.z,
+        cx: (m.x - o.x - view.tx) / view.z, // drawing point under the fingers (unzoomed px)
+        cy: (m.y - o.y - view.ty) / view.z,
+      };
+    };
+    var gestureMove = function (pts) {
+      var o = layerOrigin();
+      if (!gesture || !o || !pts.length) return;
+      var m = mid(pts);
+      var z = gesture.z0;
+      if (gesture.d0 > 20 && pts.length > 1) z = gesture.z0 * Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) / gesture.d0;
+      z = Math.max(1, Math.min(ZOOM_MAX, z));
+      // never pull the drawing's edge inside the screen
+      var tx = Math.min(0, Math.max(o.w * (1 - z), m.x - o.x - z * gesture.cx));
+      var ty = Math.min(0, Math.max(o.h * (1 - z), m.y - o.y - z * gesture.cy));
+      view = { z: z, tx: z === 1 ? 0 : tx, ty: z === 1 ? 0 : ty };
+      applyView();
+    };
+
+    // ----- hold / slide / release -----
     var redraw = function () {
       if (frame) return;
       frame = requestAnimationFrame(function () {
@@ -231,12 +411,14 @@
       opts.show(grab.node, grab.value, true);
       showDragBubble(grab.x, grab.y, label(grab.node, grab.from, grab.value));
     };
+    // x, y = screen coordinates (the bubble goes there); the maths is local
     var start = function (x, y) {
       var box = surfaceBox();
       if (!box) return false;
-      var node = opts.pick((x - box.rect.left) * box.k, (y - box.rect.top) * box.k, 22 * box.k);
+      var p = toLocal(x, y);
+      var node = opts.pick((p.x - box.left) * box.kx, (p.y - box.top) * box.ky, 22 * box.kx);
       if (!node) return false; // not on a point: an ordinary touch
-      grab = { node: node, x: x, y: y, k: box.k, armed: false, cancelled: false, from: node.value, value: node.value };
+      grab = { node: node, x: x, y: y, lx: p.x, ly: p.y, k: box.ky, armed: false, cancelled: false, from: node.value, value: node.value };
       grab.timer = setTimeout(arm, holdMs);
       return true;
     };
@@ -251,7 +433,8 @@
         return false;
       }
       if (grab.cancelled) return true;
-      if (offChart(x, y)) {
+      var p = toLocal(x, y);
+      if (offChart(p.x, p.y)) {
         grab.cancelled = true;
         opts.show(grab.node, grab.from, false); // snap back
         showDragBubble(x, y, 'Cancelled');
@@ -263,7 +446,7 @@
       var hi = opt(opts.max, node, 100);
       var step = opt(opts.step, node, 1);
       var units = per(node) || 1;
-      var raw = grab.from + (((grab.y - y) * grab.k) / units) * step;
+      var raw = grab.from + (((grab.ly - p.y) * grab.k) / units) * step;
       var value = Math.max(lo, Math.min(hi, Math.round(raw / step) * step));
       value = +value.toFixed(6); // no 0.30000000000000004
       if (value !== grab.value) {
@@ -292,15 +475,37 @@
 
     overlay.addEventListener('touchstart', function (event) {
       lastTouchMs = Date.now();
-      if (event.touches.length !== 1) { end(false); return; } // a second finger: pinch / scroll
-      start(event.touches[0].clientX, event.touches[0].clientY);
+      if (event.touches.length !== 1) { // a second finger: pinch / scroll, not a drag
+        end(false);
+        if (expanded()) gestureStart(touchesLocal(event.touches));
+        return;
+      }
+      gesture = null;
+      var t = event.touches[0];
+      if (!start(t.clientX, t.clientY) && expanded() && view.z > 1) gestureStart(touchesLocal(event.touches)); // pan
     }, { passive: true });
     overlay.addEventListener('touchmove', function (event) {
+      if (gesture) {
+        gestureMove(touchesLocal(event.touches));
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
       var touch = event.touches[0];
+      var hadGrab = !!grab;
       if (move(touch.clientX, touch.clientY) && event.cancelable) event.preventDefault();
+      // zoomed in: a swipe that began on a point (before the hold) pans instead
+      if (hadGrab && !grab && expanded() && view.z > 1) gestureStart(touchesLocal(event.touches));
     }, { passive: false });
-    overlay.addEventListener('touchend', function () { lastTouchMs = Date.now(); end(true); });
-    overlay.addEventListener('touchcancel', function () { lastTouchMs = Date.now(); end(false); });
+    overlay.addEventListener('touchend', function (event) {
+      lastTouchMs = Date.now();
+      if (gesture) { // one of two fingers lifted: carry on panning with the other
+        gesture = null;
+        if (event.touches.length === 1 && view.z > 1) gestureStart(touchesLocal(event.touches));
+        return;
+      }
+      end(true);
+    });
+    overlay.addEventListener('touchcancel', function () { lastTouchMs = Date.now(); gesture = null; end(false); });
 
     // Mouse (desktop): same hold, then drag. Phones also send mouse events after a
     // touch - ignore those.

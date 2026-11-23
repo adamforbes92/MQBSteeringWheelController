@@ -1,11 +1,54 @@
 {
   "product": "MQBSteeringWheelController-main",
-  "latest": "1.15",
+  "latest": "1.16",
   "latestByBoard": {
-    "esp32": "1.15",
-    "esp32s3": "1.15"
+    "esp32": "1.16",
+    "esp32s3": "1.16"
   },
   "releases": [
+    {
+      "version": "1.16",
+      "channel": "stable",
+      "date": "2026-11-23",
+      "ota": true,
+      "notes": "Passthru Mode now relays every LIN frame both ways byte for byte, whatever its ID, length or checksum (LIN 2.x, LIN 1.x or none), so the module can sit between a car and its wheel (e.g. an Audi A8 with a LIN 1.3 wheel) while the log records what each side sends.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.16/firmware.bin",
+            "size": 1205088,
+            "sha256": "487393f7c56e90a93f5dcbe7cba962503109821eb410e1ceb4535c8a8d0139cf"
+          },
+          "filesystem": {
+            "path": "V1.16/littlefs.bin",
+            "size": 655360,
+            "sha256": "466806a3a5a66a0fdd144f903a8a92cfb644121d72f601414f96d7b9fa1d4da5"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.16-S3/firmware.bin",
+            "size": 1184000,
+            "sha256": "5257eb3f6db72dc3a85ad4d5772b66057c4439e6f5e3aa30e699c2d99d48a142"
+          },
+          "filesystem": {
+            "path": "V1.16-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "e2723fa5c8e01ada558db11c810fd91e88c9a55ad952f7bc55b884a527b21a11"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.16/firmware.bin",
+        "size": 1205088,
+        "sha256": "487393f7c56e90a93f5dcbe7cba962503109821eb410e1ceb4535c8a8d0139cf"
+      },
+      "filesystem": {
+        "path": "V1.16/littlefs.bin",
+        "size": 655360,
+        "sha256": "466806a3a5a66a0fdd144f903a8a92cfb644121d72f601414f96d7b9fa1d4da5"
+      }
+    },
     {
       "version": "1.15",
       "channel": "stable",

@@ -1002,11 +1002,14 @@ static uint8_t chassisResponseFrame[8] = {};
 // after 4 changes in a row, so counters don't flood the 200-line log; anything
 // else (brightness turning) still shows. At most one line per ID per 250 ms.
 // ---------------------------------------------------------------------------
+// The most a LIN frame carries after its PID: 8 data bytes + the checksum.
+constexpr uint8_t kLinMaxResp = 9;
+
 struct Lin2FrameLog
 {
-  uint8_t  last[8];
-  uint8_t  logged[8];
-  uint8_t  streak[8];
+  uint8_t  last[kLinMaxResp];
+  uint8_t  logged[kLinMaxResp];
+  uint8_t  streak[kLinMaxResp];
   uint8_t  loggedLen;
   bool     seen;
   bool     silentLogged;
@@ -1015,16 +1018,25 @@ struct Lin2FrameLog
 };
 static Lin2FrameLog lin2Log[0x40] = {};
 
-static void logFrameOnChange(Lin2FrameLog& s, uint8_t bus, uint8_t id, const uint8_t* buf, uint8_t len, bool classic);
+// kind: 2 = enhanced checksum, 1 = classic, 0 = no valid checksum (`buf` is then
+// every byte as received, the last one included).
+static void logFrameOnChange(Lin2FrameLog& s, uint8_t bus, uint8_t id, const uint8_t* buf, uint8_t len, uint8_t kind);
+
+static bool passthruRelayActive();
 
 static void recordLin2Frame(uint8_t pid, const uint8_t* buf, uint8_t n)
 {
   const uint8_t id = (uint8_t)(pid & 0x3F);
   Lin2FrameLog& s = lin2Log[id];
   const uint32_t now = millis();
+  const bool relay = passthruRelayActive();
 
   if (n == 0)
   {
+    if (relay)
+    {
+      return;  // the relay logs "the car asks for this" itself (relayLogRoles())
+    }
     // The car asked, nobody here answered (e.g. it polls a wheel that isn't
     // on this wire). Worth knowing once: it names the frame the car expects.
     if (!s.silentLogged)
@@ -1047,6 +1059,13 @@ static void recordLin2Frame(uint8_t pid, const uint8_t* buf, uint8_t n)
     }
   }
 
+  if (!len && relay)
+  {
+    // Passthru relays it to the wheel exactly as received whatever its
+    // checksum (or none), so log it like any other frame: on change.
+    logFrameOnChange(s, 2, id, buf, n > kLinMaxResp ? kLinMaxResp : n, 0);
+    return;
+  }
   if (!len)
   {
     if (s.badMs == 0 || now - s.badMs >= 10000)
@@ -1064,19 +1083,20 @@ static void recordLin2Frame(uint8_t pid, const uint8_t* buf, uint8_t n)
     return;
   }
 
-  logFrameOnChange(s, 2, id, buf, len, kind == 1);
+  logFrameOnChange(s, 2, id, buf, len, kind);
 }
 
 // The change-detection half of recordLin2Frame(), shared with the wheel
 // profiles' LIN1 frames: log on first sight and on change; a byte that changes
 // on every frame (counter, CRC) stops counting after 4 changes in a row; at
 // most one line per ID per 250 ms.
-static void logFrameOnChange(Lin2FrameLog& s, uint8_t bus, uint8_t id, const uint8_t* buf, uint8_t len, bool classic)
+static void logFrameOnChange(Lin2FrameLog& s, uint8_t bus, uint8_t id, const uint8_t* buf, uint8_t len, uint8_t kind)
 {
   const uint32_t now = millis();
-  char hex[3 * 8 + 1];
+  if (len > kLinMaxResp) len = kLinMaxResp;
+  char hex[3 * kLinMaxResp + 1];
   size_t pos = 0;
-  for (uint8_t i = 0; i < len && i < 8; i++)
+  for (uint8_t i = 0; i < len; i++)
   {
     pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", buf[i]);
   }
@@ -1109,7 +1129,360 @@ static void logFrameOnChange(Lin2FrameLog& s, uint8_t bus, uint8_t id, const uin
   s.loggedLen = len;
   s.logMs = now;
   logLine("%s 0x%02X: %s (%u bytes, %s)", bus == 2 ? "LIN2" : "LIN1", id, hex, (unsigned)len,
-          classic ? "classic" : "enhanced");
+          kind == 2 ? "enhanced" : kind == 1 ? "classic" : "no valid checksum");
+}
+
+// ---------------------------------------------------------------------------
+// Passthru relay (V1.16): with Passthru Mode on and a car talking on LIN2, the
+// module stands in the wheel wire as a transparent frame relay, whatever the
+// frame IDs, lengths and checksums (LIN 2.x enhanced, LIN 1.x classic, or
+// none valid at all) — nothing is decoded, computed or checksummed by us:
+//
+//   car publishes a frame (header + its own data)  -> sent to the wheel on
+//     LIN1 byte for byte, checksum byte included (backlight, ignition / wake,
+//     heater on/off, vibration... whatever the car sends);
+//   car asks (header, then silence on LIN2)         -> the wheel is asked the
+//     same ID on LIN1, and its answer, byte for byte as received, is what
+//     the car gets the next time it asks.
+//
+// Which of the two an ID is gets learned from the bus: an ID is first watched
+// without answering — data from the car means "car sends", silence means "car
+// asks". So each ID the car asks for goes unanswered exactly once, and the car
+// always gets the wheel's previous answer (one schedule cycle old, ~10-50 ms).
+// The wheel is asked as often as the car asks for it, so LIN1 mirrors the car's
+// schedule. LIN1 runs at the wheel profile's speed (Setup > Wheel Protocol),
+// LIN2 at 19200. Not used with the BMW K-bus profile (not LIN).
+//
+// Until the car has been heard (3 headers since Passthru was switched on) the
+// old bench behaviour runs instead: the profile's button frame is polled and
+// its light frame sent, every attempt logged. Once a car has been heard that
+// stops for good (until Passthru is switched off and on), so a car going to
+// sleep isn't kept awake by the module polling its wheel.
+// ---------------------------------------------------------------------------
+enum : uint8_t { RELAY_UNKNOWN = 0, RELAY_CAR_ASKS = 1, RELAY_CAR_SENDS = 2 };
+
+struct RelayId
+{
+  uint8_t  role;
+  uint8_t  pid;                      // protected ID exactly as the car sent it
+  bool     pollWanted;               // the car asked since the wheel was last asked
+  bool     sendPending;              // a car frame waiting to go to the wheel
+  uint8_t  sendLen;
+  uint8_t  sendBuf[kLinMaxResp];
+  uint8_t  ansLen;                   // the wheel's last answer, verbatim (0 = none)
+  uint8_t  ansBuf[kLinMaxResp];
+  uint32_t ansMs;
+};
+// Shared by the LIN2 listener and the LIN1 task: every access under stateMux.
+static RelayId relayIds[0x40] = {};
+static volatile uint32_t relayCarMs = 0;       // last header from the car
+static volatile uint8_t  relayCarHeaders = 0;  // headers heard since Passthru went on (capped)
+constexpr uint8_t  kRelayCarHeadersNeeded = 3;
+// The cached answer is always one car cycle old (the wheel is asked when the car
+// asks), and each ask replaces it — or clears it if the wheel has gone quiet. So
+// this only guards against LIN1 having stalled; it must exceed the slowest ID's
+// period in the car's schedule (some are polled only every second or so).
+constexpr uint32_t kRelayAnswerMaxAgeMs = 10000;
+
+static bool passthruRelayActive()
+{
+  return passthruEnabled && wheelProtocol != WHEEL_PROTOCOL_BMW_KBUS;
+}
+
+// LIN2 task only: role per ID as last logged, and IDs whose role changed.
+static uint8_t  relayRoleLogged[0x40] = {};
+static uint64_t relayRoleDirty = 0;
+
+// A car frame has ended on LIN2 (LIN2 task): n bytes after the PID, 0 = silence.
+static void relayCarFrame(uint8_t pid, const uint8_t* buf, uint8_t n)
+{
+  const uint8_t id = (uint8_t)(pid & 0x3F);
+  if (n > kLinMaxResp) n = kLinMaxResp;
+  const uint8_t role = n ? RELAY_CAR_SENDS : RELAY_CAR_ASKS;
+  portENTER_CRITICAL(&stateMux);
+  RelayId& r = relayIds[id];
+  r.role = role;
+  r.pid = pid;
+  if (n)
+  {
+    memcpy(r.sendBuf, buf, n);
+    r.sendLen = n;
+    r.sendPending = true;
+    r.ansLen = 0;
+  }
+  else
+  {
+    r.pollWanted = true;
+  }
+  portEXIT_CRITICAL(&stateMux);
+
+  if (relayRoleLogged[id] != role)
+  {
+    relayRoleLogged[id] = role;
+    relayRoleDirty |= (1ULL << id);
+  }
+
+  // Keep the Dashboard / health tiles fed: any frame with a valid checksum
+  // means LIN2 is alive; the light ID in its usual VW shape is the BCM light.
+  if (n >= 2 && checksumKind(pid, buf, (uint8_t)(n - 1)))
+  {
+    chassisLinLastOkMs = millis();
+    if (n == 5 && pid == calculateProtectedId(linLightInId) && checksumKind(pid, buf, 4) == 2)
+    {
+      memcpy(gatewayLightData, buf, 4);
+      memcpy(steeringWheelLightData, buf, sizeof(steeringWheelLightData));
+      chassisLightLastOkMs = millis();
+    }
+  }
+}
+
+// LIN2 task, after the FIFO is drained: one line per ID whose role changed.
+static void relayLogRoles()
+{
+  while (relayRoleDirty)
+  {
+    const uint8_t id = (uint8_t)__builtin_ctzll(relayRoleDirty);
+    relayRoleDirty &= ~(1ULL << id);
+    if (relayRoleLogged[id] == RELAY_CAR_ASKS)
+    {
+      logLine("[RELAY] LIN2 0x%02X: the car asks for this; passing the wheel's answer back", id);
+    }
+    else
+    {
+      logLine("[RELAY] LIN2 0x%02X: the car sends this; passing it to the wheel", id);
+    }
+  }
+}
+
+// ---- LIN1 side (steering-wheel LIN task, steeringWheelLinMutex held) --------
+static uint32_t lin1BitUs()
+{
+  return (1000000UL + wheelLinBaudNow / 2) / (wheelLinBaudNow ? wheelLinBaudNow : linBaud);
+}
+
+// BREAK + SYNC + the car's own PID, written straight to the wheel UART (the
+// library always appends its own checksum, which is exactly what must not
+// happen here). The BREAK is a 0x00 at half speed: 9 bits low = 18 bit times.
+static void lin1RawHeader(uint8_t pid)
+{
+  Serial1.flush();
+  while (Serial1.available()) Serial1.read();
+  Serial1.updateBaudRate(wheelLinBaudNow / 2);
+  Serial1.write((uint8_t)0x00);
+  Serial1.flush();
+  Serial1.updateBaudRate(wheelLinBaudNow);
+  const uint8_t hdr[2] = {0x55, pid};
+  Serial1.write(hdr, sizeof(hdr));
+  Serial1.flush();
+}
+
+// Position just after "55 PID" (our own header's echo) in a LIN1 capture, or -1.
+static int lin1AfterHeader(const uint8_t* r, uint8_t n, uint8_t pid)
+{
+  for (uint8_t p = 1; p < n; p++)
+  {
+    if (r[p - 1] == 0x55 && r[p] == pid) return p + 1;
+  }
+  return -1;
+}
+
+// Everything LIN1 receives after our header: ends 3 byte times after the last
+// byte once anything beyond our own header echo has arrived, or after
+// `waitUs` if nothing has (a slave may take up to 1.4x the frame time to
+// answer, and the ESP32 UART hands bytes over ~1 ms late). Also ends as soon as
+// `wantAfter` bytes have followed the header (what we sent ourselves, or a
+// full 9-byte answer).
+static uint8_t lin1CollectRaw(uint8_t* out, uint8_t max, uint8_t pid, uint32_t waitUs, uint8_t wantAfter)
+{
+  const uint32_t bit = lin1BitUs();
+  const uint32_t gapUs = 30 * bit + 1500;            // 3 byte times of silence
+  const uint32_t hardUs = waitUs + 140 * bit + 3000;  // whole frame, worst case
+  const uint32_t start = micros();
+  uint32_t last = start;
+  uint8_t n = 0;
+  while (true)
+  {
+    while (Serial1.available())
+    {
+      const uint8_t b = (uint8_t)Serial1.read();
+      if (n < max) out[n++] = b;
+      last = micros();
+    }
+    const uint32_t now = micros();
+    const int p = lin1AfterHeader(out, n, pid);
+    const bool more = (p >= 0) && (n > p);  // bytes after our header
+    if ((more && (n - p >= wantAfter || now - last >= gapUs)) ||
+        (!more && now - start >= waitUs && now - last >= gapUs) || now - start >= hardUs)
+    {
+      break;
+    }
+    delayMicroseconds(100);
+  }
+  return n;
+}
+
+static Lin2FrameLog relayWheelLog[0x40] = {};
+static uint8_t      relayWheelState[0x40] = {};  // 0 unknown, 1 answering, 2 silent, 3 bus fault
+
+static void relayNoteWheel(uint8_t id, uint8_t state, uint8_t failedSendLen)
+{
+  if (relayWheelState[id] == state) return;
+  const uint8_t was = relayWheelState[id];
+  relayWheelState[id] = state;
+  if (state == 2)
+  {
+    logLine("[RELAY] LIN1 0x%02X: the wheel doesn't answer (the car asks for it); the car gets no answer either", id);
+  }
+  else if (state == 3)
+  {
+    logLine("[RELAY] LIN1 0x%02X: our own %u bytes didn't read back on LIN1 - wheel bus fault (wiring, "
+            "transceiver asleep, Legacy PCB setting?)", id, (unsigned)failedSendLen);
+  }
+  else if (was == 2 || was == 3)
+  {
+    logLine("[RELAY] LIN1 0x%02X: OK again", id);
+  }
+}
+
+// A car frame to the wheel, byte for byte.
+static void relaySendToWheel(uint8_t id, uint8_t pid, const uint8_t* buf, uint8_t n)
+{
+  lin1RawHeader(pid);
+  Serial1.write(buf, n);
+  Serial1.flush();
+  uint8_t r[16];
+  const uint8_t rn = lin1CollectRaw(r, sizeof(r), pid, 0, n);
+  const int p = lin1AfterHeader(r, rn, pid);
+  const bool echoOk = (p >= 0) && (rn - p >= n) && memcmp(r + p, buf, n) == 0;
+  relayNoteWheel(id, echoOk ? 1 : 3, n);
+  if (echoOk) swLinLastOkMs = millis();
+}
+
+// Ask the wheel for a frame the car asks for, and keep its answer verbatim.
+static void relayPollWheel(uint8_t id, uint8_t pid)
+{
+  lin1RawHeader(pid);
+  uint8_t r[16];
+  const uint32_t respUs = 140 * lin1BitUs() + 1500;  // 1.4 x (8 data + checksum), + UART latency
+  const uint8_t rn = lin1CollectRaw(r, sizeof(r), pid, respUs, kLinMaxResp);
+  const int p = lin1AfterHeader(r, rn, pid);
+  uint8_t m = 0;
+  const uint8_t* d = nullptr;
+  if (p >= 0)
+  {
+    d = r + p;
+    m = (uint8_t)(rn - p);
+    if (m > kLinMaxResp) m = kLinMaxResp;
+  }
+
+  portENTER_CRITICAL(&stateMux);
+  RelayId& rel = relayIds[id];
+  rel.ansLen = m;
+  if (m) memcpy(rel.ansBuf, d, m);
+  rel.ansMs = millis();
+  portEXIT_CRITICAL(&stateMux);
+
+  if (p < 0)
+  {
+    relayNoteWheel(id, 3, 2);
+    return;
+  }
+  if (m == 0)
+  {
+    relayNoteWheel(id, 2, 0);
+    return;
+  }
+  relayNoteWheel(id, 1, 0);
+  swLinLastOkMs = millis();
+
+  // Log on change, with the checksum the wheel used (or none valid).
+  const uint8_t kind = (m >= 2) ? checksumKind(pid, d, (uint8_t)(m - 1)) : 0;
+  logFrameOnChange(relayWheelLog[id], 1, id, d, kind ? (uint8_t)(m - 1) : m, kind);
+
+  // Dashboard "incoming LIN (wheel)": the wheel's button frame.
+  const uint8_t btnId = (wheelProtocol == WHEEL_PROTOCOL_AUDI) ? audiButtonID : (uint8_t)(linButtonInId & 0x3F);
+  if (id == btnId)
+  {
+    portENTER_CRITICAL(&stateMux);
+    memset(lastLinInFrame, 0, sizeof(lastLinInFrame));
+    const uint8_t dl = kind ? (uint8_t)(m - 1) : m;
+    memcpy(lastLinInFrame, d, dl > sizeof(lastLinInFrame) ? sizeof(lastLinInFrame) : dl);
+    lastLinInLen = sizeof(lastLinInFrame);
+    lastLinInId = id;
+    portEXIT_CRITICAL(&stateMux);
+  }
+}
+
+bool servicePassthruRelay()
+{
+  static bool wasOn = false;
+  static bool announced = false;
+  const bool on = passthruRelayActive();
+  if (on != wasOn)
+  {
+    wasOn = on;
+    announced = false;
+    // Fresh start each time Passthru goes on: roles are learned again.
+    portENTER_CRITICAL(&stateMux);
+    memset(relayIds, 0, sizeof(relayIds));
+    relayCarHeaders = 0;
+    relayCarMs = 0;
+    portEXIT_CRITICAL(&stateMux);
+    memset(relayWheelState, 0, sizeof(relayWheelState));
+    memset(relayWheelLog, 0, sizeof(relayWheelLog));
+    if (on) logLine("[RELAY] Passthru on: relaying the car once it is heard on LIN2 (bench mode until then)");
+  }
+  if (!on || relayCarHeaders < kRelayCarHeadersNeeded)
+  {
+    return false;  // bench behaviour (or normal mode)
+  }
+
+  if (!announced)
+  {
+    announced = true;
+    logLine("[RELAY] car heard on LIN2: relaying every frame both ways, checksums untouched");
+  }
+
+  if (!lockLinBus(steeringWheelLinMutex))
+  {
+    return true;
+  }
+  setWheelLinBaud(profileWheelBaud());
+  for (uint8_t id = 0; id < 0x40; id++)
+  {
+    uint8_t buf[kLinMaxResp];
+    uint8_t n = 0;
+    uint8_t pid = 0;
+    bool send = false;
+    bool poll = false;
+    portENTER_CRITICAL(&stateMux);
+    RelayId& r = relayIds[id];
+    pid = r.pid;
+    if (r.sendPending)
+    {
+      send = true;
+      n = r.sendLen;
+      memcpy(buf, r.sendBuf, n);
+      r.sendPending = false;
+    }
+    else if (r.pollWanted && r.role == RELAY_CAR_ASKS)
+    {
+      poll = true;
+      r.pollWanted = false;
+    }
+    portEXIT_CRITICAL(&stateMux);
+
+    if (send)
+    {
+      relaySendToWheel(id, pid, buf, n);
+    }
+    else if (poll)
+    {
+      relayPollWheel(id, pid);
+    }
+  }
+  unlockLinBus(steeringWheelLinMutex);
+  return true;
 }
 
 void serviceChassisLinBus()
@@ -1132,7 +1505,20 @@ void serviceChassisLinBus()
   static uint8_t pendBuf[12];
   static uint8_t pendLen = 0;
   static bool    pendReady = false;
+  // Passthru relay (see relayCarFrame()): every header is handled generically.
+  const bool relay = passthruRelayActive();
+  static bool relayWas = false;
+  if (relay != relayWas)
+  {
+    relayWas = relay;
+    memset(relayRoleLogged, 0, sizeof(relayRoleLogged));  // directions are logged afresh
+    relayRoleDirty = 0;
+  }
   auto stashUnknown = [&](uint8_t n) {
+    if (relay)
+    {
+      relayCarFrame(unkPid, unkBuf, n);  // no logging in here: safe before the FIFO is drained
+    }
     if (pendReady)
     {
       recordLin2Frame(pendPid, pendBuf, pendLen);  // two in one pass: rare; the older one goes now
@@ -1198,7 +1584,8 @@ void serviceChassisLinBus()
     // followed by the button PID inside another frame's data would otherwise
     // be answered mid-frame and collide on the bus.
     const bool realHeader = (calculateProtectedId(pid) == pid) && (beforeWindow == 0x00 || !unkActive);
-    if (!realHeader && (!known || unkActive))
+    // (In the passthru relay every ID is "ours", so every header must be real.)
+    if (!realHeader && (relay || !known || unkActive))
     {
       continue;
     }
@@ -1211,6 +1598,60 @@ void serviceChassisLinBus()
       if (n > 0 && beforeWindow == 0x00 && unkBuf[n - 1] == 0x00) n--;
       unkActive = false;
       stashUnknown(n);
+    }
+
+    if (relay)
+    {
+      const uint8_t id = (uint8_t)(pid & 0x3F);
+      relayCarMs = millis();
+      if (relayCarHeaders < 255) relayCarHeaders = (uint8_t)(relayCarHeaders + 1);
+
+      // An ID the car asks for, with a fresh wheel answer in hand: give it
+      // back exactly as the wheel sent it (its length, its checksum byte).
+      uint8_t ans[kLinMaxResp];
+      uint8_t n = 0;
+      portENTER_CRITICAL(&stateMux);
+      RelayId& r = relayIds[id];
+      if (r.role == RELAY_CAR_ASKS)
+      {
+        r.pid = pid;
+        r.pollWanted = true;  // and have the wheel asked again for next time
+        if (r.ansLen && (uint32_t)(millis() - r.ansMs) < kRelayAnswerMaxAgeMs)
+        {
+          n = r.ansLen;
+          memcpy(ans, r.ansBuf, n);
+        }
+      }
+      portEXIT_CRITICAL(&stateMux);
+
+      if (n)
+      {
+        Serial2.write(ans, n);
+        Serial2.flush();
+        uint8_t echo[kLinMaxResp];
+        collectBytes(echo, n, 10);  // our own bytes, read back by the transceiver
+        chassisLinLastOkMs = millis();
+        if (id == (uint8_t)(linButtonInId & 0x3F))
+        {
+          portENTER_CRITICAL(&stateMux);
+          memset(lastLinOutFrame, 0, sizeof(lastLinOutFrame));
+          memcpy(lastLinOutFrame, ans, n > sizeof(lastLinOutFrame) ? sizeof(lastLinOutFrame) : n);
+          lastLinOutLen = sizeof(lastLinOutFrame);
+          lastLinOutId = linButtonInId;
+          portEXIT_CRITICAL(&stateMux);
+        }
+        windowLen = 0;
+        continue;
+      }
+
+      // Otherwise watch what follows: the car's own data (it sends this frame
+      // to the wheel) or silence (it asks, and there's no answer to give yet).
+      // Either way relayCarFrame() gets it when the frame ends.
+      unkPid = pid;
+      unkActive = true;
+      unkLen = 0;
+      unkLastUs = micros();
+      continue;
     }
 
     if (pid == buttonPid && (passthruEnabled || linOutputEnabled))
@@ -1308,6 +1749,7 @@ void serviceChassisLinBus()
     pendReady = false;
     recordLin2Frame(pendPid, pendBuf, pendLen);
   }
+  relayLogRoles();
 
   unlockLinBus(chassisLinMutex);
 }
@@ -2133,7 +2575,7 @@ static LIN_Master_Base::error_t acquireGenericWheel(uint8_t& rxId)
       anyOk = true;
       if (!passthruEnabled)
       {
-        logFrameOnChange(wheelFrameLog[i], 1, s.btnId[i], st.data, st.len, st.classic);
+        logFrameOnChange(wheelFrameLog[i], 1, s.btnId[i], st.data, st.len, st.classic ? 1 : 2);
       }
     }
     else if (i == 0)
@@ -2204,7 +2646,7 @@ static void sendGenericLight()
   static Lin2FrameLog lightLog = {};
   if (!passthruEnabled)
   {
-    logFrameOnChange(lightLog, 1, s.lightId, d, s.lightLen, classic);
+    logFrameOnChange(lightLog, 1, s.lightId, d, s.lightLen, classic ? 1 : 2);
   }
 }
 

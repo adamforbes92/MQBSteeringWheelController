@@ -5,6 +5,37 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.16 - Passthru relays any frame, any checksum (23/11/2026). For fitting
+        the module in a customer's A8 to capture heating / vibration traffic.
+        Up to V1.15 Passthru relayed only two frames and re-built them: the
+        car's button poll was answered with 8 bytes + an ENHANCED checksum
+        computed over our copy (for a LIN 1.3 wheel, the DECODED frame), the
+        light frame was only taken as 4 bytes + enhanced checksum, every other
+        ID the car asked for went unanswered, and nothing else the car sent
+        reached the wheel (the module sent its own fixed 0x01 "50 03"
+        instead). An A8 car (0x30 6 bytes classic, 0x21, 0x01, heater...)
+        could not have worked through it.
+        Now (LIN.cpp "Passthru relay"), with Passthru on and a car heard on
+        LIN2 (3 headers): every LIN2 header is handled generically. An ID is
+        watched once: data from the car = the car sends it -> relayed to the
+        wheel on LIN1 byte for byte, its checksum byte included (raw BREAK /
+        SYNC / PID written to Serial1, not the library, which would add its own
+        checksum); silence = the car asks -> the wheel is asked the same PID on
+        LIN1 and its answer, every byte as received (any length, classic /
+        enhanced / no valid checksum), is what the car gets on its next ask
+        (served from LIN2 straight from the header, as before). LIN1 runs every
+        1 ms in this state, mirroring the car's schedule; the normal cycle
+        (profile polls, our own light / 0x01 frames) does not run. Logging:
+        one [RELAY] line per ID with its direction, the car's frames and the
+        wheel's answers on change (counter bytes masked) labelled enhanced /
+        classic / "no valid checksum", wheel silent / LIN1 echo fault /
+        recovered. LIN2 frames with no valid checksum are logged on change in
+        passthru (were: one line per 10 s). Lin2FrameLog holds 9 bytes (8 +
+        checksum); logFrameOnChange() takes the checksum kind incl. "none".
+        Until a car is heard the old bench behaviour runs (profile button poll
+        + light frame, every attempt logged); once heard it never returns to it
+        until Passthru is toggled, so the car's sleep isn't undone by our polls.
+        Not with the BMW K-bus profile. NOT tested on a car yet.
 V1.15 - Phone touch UI (22/11/2026). Shared touchui.js / touchui.css from
         _SharedTheme copied into data/ and loaded before style.css / app.js:
         no long-press copy / context menu (text boxes keep it), and scrolling

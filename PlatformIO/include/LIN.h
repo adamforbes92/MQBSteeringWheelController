@@ -8,6 +8,10 @@
 // rationale. Must be called from a tight, near-continuous loop (see
 // chassisLinListenerTask() in tasks.cpp), not the normal ~100 ms LIN1 cadence.
 void serviceChassisLinBus();
+// Passthru relay, LIN1 side (V1.16): with Passthru on and a car heard on LIN2,
+// relays every frame both ways byte for byte and returns true — the caller then
+// skips its normal LIN1 cycle. False: no car yet (bench behaviour) or Passthru off.
+bool servicePassthruRelay();
 void getButtonState();
 void getAccButtonState();
 void getTemperatureState();

@@ -221,6 +221,15 @@ static void steeringWheelLinTask(void* parameter) {
     // Wheel profile: LIN1 speed / format (19200 VW, 9600 Volvo, 8E1 K-bus...).
     serviceWheelBus();
 
+    // Passthru with a car on LIN2: LIN1 just mirrors the car's schedule, frame
+    // for frame (servicePassthruRelay() in LIN.cpp). Runs every 1 ms so the
+    // wheel is asked / told promptly; none of the normal cycle below runs.
+    if (servicePassthruRelay()) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      lastWakeTime = xTaskGetTickCount();
+      continue;
+    }
+
     // --- Light frame (0x0D) ---
     // Reading the chassis/BCM light frame itself now happens continuously in
     // chassisLinListenerTask() (serviceChassisLinBus()), not here — see that

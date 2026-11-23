@@ -44,7 +44,7 @@ the S3) and the OTA tab only offers releases carrying images for the board it ru
 | BCM live status | Dashboard shows the chassis LIN light frame's brightness and raw bytes independently of the active backlight source, so BCM presence is visible even under Aux/Forced |
 | Settings import/export | Back up and restore the full configuration (including the button map) as a JSON file |
 | LIN monitor | A live event log of button and accessory activity, exportable as CSV, viewable and clearable from the UI |
-| Passthru mode | Diagnostic bypass: relays LIN frames unmodified between the wheel and chassis buses and logs every attempt — success or failure, any length — instead of only successful, changed frames |
+| Passthru mode | Diagnostic bypass: with the module fitted between car and wheel, relays every LIN frame both ways byte for byte — any ID, any length, any checksum (LIN 2.x, LIN 1.x or none) — and logs what each side sends; on the bench (no car) it polls the wheel and logs every attempt |
 | Legacy PCB mode | Reverses RX/TX on **both** LIN channels for older boards (applied at boot) |
 | Button re-mapping | Up to **24** mappings, each with a name, original ID, new LIN ID, CAN bit, resistance and flags |
 | LIN output | Sends the translated button as a LIN master request on the chassis bus (configurable ID) |
@@ -73,7 +73,7 @@ If you want to purchase an assembled controller, you can do so here: [LIN MFSW C
 Designed for VAG multi-function steering wheels that report buttons over a **LIN slave
 response** and (optionally) carry paddle shifters and a LIN-dimmed backlight. Button IDs,
 LIN frame IDs and the CAN/GRA frame set are **car- and wheel-specific** — treat the
-shipped `buttonMappings[]` table (in [src/globals.cpp](src/globals.cpp)) as a known-good
+shipped `buttonMappings[]` table (in [src/globals.cpp](PlatformIO/src/globals.cpp)) as a known-good
 baseline and re-learn each button to suit your hardware. Both **PQ** and **MQB** are
 supported on **each side independently** — pick the wheel family in **Setup → Wheel
 Protocol** and the chassis/BCM family in **Setup → Chassis Protocol** (see
@@ -83,8 +83,8 @@ chassis choice, for fitting an MQB (or PQ) wheel to an ID.x car — see
 [MEB chassis](#meb-chassis-idx). If your wheel's buttons aren't recognised at all, watch
 the **LIN Monitor** while pressing them to find the frame and byte that change.
 
-> Frame IDs and calibration live in [include/defs.h](include/defs.h) and
-> [src/globals.cpp](src/globals.cpp). The resistive output values are tuned to your
+> Frame IDs and calibration live in [include/defs.h](PlatformIO/include/defs.h) and
+> [src/globals.cpp](PlatformIO/src/globals.cpp). The resistive output values are tuned to your
 > radio's resistor ladder — characterise them with the **Test Resistance** diagnostic or a datasheet for your radio.
 
 ---
@@ -133,7 +133,7 @@ from `lib_deps`, and the ESP32 platform (pioarduino) is downloaded on the first 
 
 ### Pin Map
 
-Defined in [include/defs.h](include/defs.h):
+Defined in [include/defs.h](PlatformIO/include/defs.h):
 
 | Group | Signal | DevKit GPIO | S3 board GPIO |
 | --- | --- | --- | --- |
@@ -155,8 +155,9 @@ The device breaks out to a single 12-way **MX23A12NF1** connector:
 
 ![Main Connector Pinout](Images/PCBPinout.png)
 
-> Viewed into the mating face: the top row runs pin **1** (right) to pin **6** (left), and
-> the bottom row runs pin **7** (right) to pin **12** (left).
+> Pin numbers are the board header's. Looking into the header on the board: the top row runs
+> pin **1** (right) to pin **6** (left), and the bottom row runs pin **7** (right) to pin **12** (left).
+> The DevKit and S3 boards share this pinout; the only difference is pin 12.
 
 | Pin | Signal | Notes |
 | --- | --- | --- |
@@ -171,7 +172,7 @@ The device breaks out to a single 12-way **MX23A12NF1** connector:
 | 9 | `5V` | 5 V rail - typically not required |
 | 10 | `OUTPUT1` | High-side driver output |
 | 11 | — | Unused |
-| 12 | — | Unused |
+| 12 | `GND` | S3 board: second ground. DevKit board: not connected |
 
 **Installation & Assembly Manual:** [docs/INSTALLATION.md](docs/INSTALLATION.md) (print-ready PDF: [docs/MFSW-Controller-Installation-Manual.pdf](docs/MFSW-Controller-Installation-Manual.pdf)): making up the MX23A plug, wiring it into the car, and setting up a new wheel step by step.
 
@@ -190,9 +191,9 @@ on the wheel bus, so this jumper should normally remain fitted.
 
 ### LIN2_MASTER
 
-Enables the master pull-up on **LIN 2** (the chassis bus). Fit it when the adapter is the
-master driving the chassis LIN output; remove it if another module already provides the
-master pull-up on that bus.
+Enables the master pull-up on **LIN 2** (the chassis bus). In a car the BCM / gateway is the
+LIN master on the chassis side and already provides the pull-up, so this jumper can typically
+be removed. Fit it only when nothing else on that bus is a master (on the bench, for example).
 
 ### R_TERM1
 
@@ -477,9 +478,10 @@ Backlight).
 
 PQ and MQB use the LIN 2.x **enhanced** checksum (sum of the PID and all data bytes, folded
 to a byte and inverted). The **VAG LIN 1.3** wheel protocol uses the LIN 1.x **classic** checksum
-(data bytes only). The LIN library applies either one automatically. Passthru Mode's log
-notes which one was requested (`v2` / `v1`) alongside a precise failure reason
-(`TIMEOUT` / `CHK` / `ECHO` / `STATE`) when a frame doesn't validate. The wheel scan and the
+(data bytes only). The LIN library applies either one automatically. Passthru Mode on the
+bench notes which one was requested (`v2` / `v1`) alongside a precise failure reason
+(`TIMEOUT` / `CHK` / `ECHO` / `STATE`) when a frame doesn't validate; in the car it copies
+each frame's checksum byte as it is, whichever kind it is (or none). The wheel scan and the
 Custom profile's **Auto** checksum go further: they read the raw bytes and test both.
 
 ### Process
@@ -490,15 +492,15 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 3. **Map** the code through the button table to the CAN / resistive / LIN / high-side outputs.
 
 > **Passthru Mode** (Diagnostics → LIN Monitor) bypasses this process entirely: frames are
-> relayed unmodified between the wheel and chassis buses instead of mapped/editted, and
-> every poll/send attempt is logged — see [LIN Monitor](#lin-monitor) below.
+> relayed byte for byte between the wheel and chassis buses instead of mapped/edited, with
+> their own checksums whatever they are — see [LIN Monitor](#lin-monitor) below.
 
 ---
 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.15** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.16** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -738,22 +740,52 @@ Outside Passthru Mode it records:
   (`LIN2 0x30 header from the car, no answer on this bus`), which names the frame the car
   expects from its wheel.
 
-**Passthru Mode** (toggle on the same card) switches the monitor from "successful, changed
-frames only" to logging **every** poll/send attempt on every polled ID — success or failure,
-any length, including timeouts and checksum errors — as `LIN1`/`LIN2` lines noting the
-requested checksum version, a precise failure reason, length and raw bytes, e.g.:
+**Passthru Mode** (toggle on the same card) turns the module into a transparent bridge
+between the car (LIN2) and the wheel (LIN1): no mapping, no outputs, nothing decoded or
+re-built. Off by default and **not persisted** — always off after a reboot.
+
+*In the car* (LIN2 wired to the car's wheel wire, LIN1 to the wheel; Wheel Protocol set to
+the wheel's profile, which sets LIN1's speed): once the car has been heard, **every** frame is
+relayed both ways, byte for byte, whatever its ID, length or checksum — LIN 2.x enhanced,
+LIN 1.x classic, or no valid checksum at all. The checksum byte is copied, never computed.
+
+- A frame the **car sends** (backlight, ignition / wake, heater on/off, vibration…) goes to
+  the wheel exactly as the car sent it.
+- A frame the **car asks for** (buttons, status…) is asked of the wheel under the same ID,
+  and the wheel's answer, exactly as the wheel sent it, is what the car gets the next time it
+  asks. So the car always gets the wheel's previous answer (one schedule cycle old), and
+  the very first ask of each ID goes unanswered while the module works out which kind it is.
+
+The log shows each ID's direction once, then the car's frames and the wheel's answers
+whenever they change (counter bytes masked, as above), with the checksum each one used:
+
+```
+[RELAY] car heard on LIN2: relaying every frame both ways, checksums untouched
+[RELAY] LIN2 0x01: the car sends this; passing it to the wheel
+LIN2 0x01: 50 03 (2 bytes, classic)
+[RELAY] LIN2 0x30: the car asks for this; passing the wheel's answer back
+LIN1 0x30: 02 10 00 00 00 46 (6 bytes, classic)
+LIN2 0x1A: 07 00 3C (3 bytes, no valid checksum)
+```
+
+(Example lines show the format, not a real car capture.) A frame with no valid checksum is
+shown with all its bytes, the last one included, because there's no telling which byte
+would have been the checksum. If the wheel stops answering an ID the car asks for, or
+LIN1 doesn't read back what the module sent, that's logged once, with a line when it
+recovers. Not available with the BMW K-bus profile.
+
+*On the bench* (nothing on LIN2): until a car has been heard, the module polls the wheel
+profile's button frame and sends its light frame itself, logging **every** attempt
+(success or failure, any length, with the failure reason), e.g.:
 
 ```
 LIN1 0x0E v2 OK len=8: 00 02 00 00 00 00 00 00
-LIN2 0x0D v2 TIMEOUT len=4: 00 00 00 00
 LIN1 0x0E v2 CHK len=8: 00 1A 00 00 00 00 00 3F
 ```
 
-While enabled it also bypasses the mapping/protocol-shaping process entirely — button and
-light frames are relayed unmodified between the wheel and chassis buses (the button frame
-under the *same* ID it was received on, a genuine mirror rather than a re-encoding) instead
-of being mapped and reshaped, so it doubles as a raw bench-test bridge. Off by default and
-**not persisted** — always off after a reboot.
+Once a car has been heard, the module doesn't go back to polling the wheel on its own
+(even if the car falls silent) until Passthru is switched off and on, so a car going to
+sleep isn't kept awake by the module.
 
 <p align="center">
   <img src="Images/ui-lin-monitor.png" alt="Diagnostics — LIN Monitor card with Passthru Mode, Auto-scroll, Export (CSV), Clear, Scan LIN1 with the last scan's result, and the rolling frame / button-event log" width="300">
@@ -825,6 +857,7 @@ A power-cycle (ignition off/on) brings Wi-Fi back.
 
 | Setting | Default |
 | --- | --- |
+| CAN broadcast (Broadcast over CAN) | Off |
 | CAN broadcast ID | `0x1E0` |
 | CAN hold window | 250 ms |
 | LIN baud / poll | 19.2 kbit/s / 100 ms |
@@ -837,11 +870,14 @@ A power-cycle (ignition off/on) brings Wi-Fi back.
 
 ## Version History
 
-The firmware version (`FW_VERSION` in [include/defs.h](include/defs.h)) is shown on the
+The firmware version (`FW_VERSION` in [include/defs.h](PlatformIO/include/defs.h)) is shown on the
 OTA tab. The full history lives in
-[include/ver.h](include/ver.h):
+[include/ver.h](PlatformIO/include/ver.h):
 
 ```
+V1.16 — Passthru relays every frame both ways, byte for byte, whatever its ID, length and
+        checksum (LIN 2.x, LIN 1.x or none valid) — the car's frames to the wheel and the
+        wheel's answers to the car (needed to fit the module in a car with a LIN 1.3 wheel)
 V1.15 — phone touch UI: no long-press copy menu; scrolling the page never moves a slider
         (shared touchui.js/css)
 V1.14 — Learn fix: a wheel frame that failed (late answer, timeout) no longer feeds Learn, which
