@@ -1,11 +1,54 @@
 {
   "product": "MQBSteeringWheelController-main",
-  "latest": "1.16",
+  "latest": "1.17",
   "latestByBoard": {
-    "esp32": "1.16",
-    "esp32s3": "1.16"
+    "esp32": "1.17",
+    "esp32s3": "1.17"
   },
   "releases": [
+    {
+      "version": "1.17",
+      "channel": "stable",
+      "date": "2026-11-24",
+      "ota": true,
+      "notes": "New Chassis Protocol: VAG LIN 1.3 (Audi A8 D3 etc.), so a newer wheel can be fitted to a LIN 1.3 car. The module answers the car's 0x30 / 0x21 polls like the car's own wheel, passes the heated-wheel button on and reports the rim temperature.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.17/firmware.bin",
+            "size": 1205776,
+            "sha256": "8b87d3bce267e551c6123431152ed0e1f2cda18ddcdc63123da250cfbf73143d"
+          },
+          "filesystem": {
+            "path": "V1.17/littlefs.bin",
+            "size": 655360,
+            "sha256": "057ecebb60c427559613af8646a077da1aaf920136a56dca9f3c4546398de747"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.17-S3/firmware.bin",
+            "size": 1184752,
+            "sha256": "a02185c54f798812bcc8f703fbec27b9501428c75dfb4d80d4e42179cd820618"
+          },
+          "filesystem": {
+            "path": "V1.17-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "bfa4ec263edb50ebbb008cd4fff8e6a435a2cc0ece123e13b24c7e837ce11039"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.17/firmware.bin",
+        "size": 1205776,
+        "sha256": "8b87d3bce267e551c6123431152ed0e1f2cda18ddcdc63123da250cfbf73143d"
+      },
+      "filesystem": {
+        "path": "V1.17/littlefs.bin",
+        "size": 655360,
+        "sha256": "057ecebb60c427559613af8646a077da1aaf920136a56dca9f3c4546398de747"
+      }
+    },
     {
       "version": "1.16",
       "channel": "stable",
