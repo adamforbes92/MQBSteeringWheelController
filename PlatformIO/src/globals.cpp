@@ -174,6 +174,8 @@ volatile uint8_t  wheelTempMin = 0xFF;
 volatile uint8_t  wheelTempMax = 0x00;
 volatile uint8_t  wheelTempSrc = WHEEL_TEMP_SRC_NONE;
 volatile uint8_t  wheelHeaterByte = 0xFF;
+volatile uint32_t wheelHeaterPressMs = 0;
+volatile uint8_t  heaterTempOffset   = 0;
 volatile uint32_t wheelTempMs  = 0;
 
 void noteWheelTemp(uint8_t raw, uint8_t src)
@@ -433,6 +435,8 @@ void loadPreferences() {
   if (chassisProtocol > CHASSIS_PROTOCOL_MAX) chassisProtocol = CHASSIS_PROTOCOL_MQB;
   charismaMode          = preferences.getUChar("chaMode",     charismaMode);
   if (charismaMode > CHARISMA_MODE_MAX) charismaMode = CHARISMA_MODE_OFF;
+  heaterTempOffset      = preferences.getUChar("heatOfs",     heaterTempOffset);
+  if (heaterTempOffset > HEATER_TEMP_OFFSET_MAX) heaterTempOffset = HEATER_TEMP_OFFSET_MAX;
   charismaButtonBit     = preferences.getUChar("chaBtnBit",   charismaButtonBit);
   if (charismaButtonBit != CHARISMA_BTN_TASTE2 &&
       charismaButtonBit != CHARISMA_BTN_ECO &&
@@ -500,6 +504,7 @@ void savePreferences() {
   preferences.putUChar("mqbAct3",      mqbActByte3);
   preferences.putUChar("chassisProto", chassisProtocol);
   preferences.putUChar("chaMode",      charismaMode);
+  preferences.putUChar("heatOfs",      heaterTempOffset);
   preferences.putUChar("chaBtnBit",    charismaButtonBit);
   preferences.putUChar("chaProgN",     charismaProgramCount);
   preferences.putUChar("chaParts",     charismaParticipants);

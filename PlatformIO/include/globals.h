@@ -232,8 +232,23 @@ extern volatile uint8_t mqbActByte3;
 constexpr uint8_t CHASSIS_PROTOCOL_PQ  = 0;
 constexpr uint8_t CHASSIS_PROTOCOL_MQB = 1;
 constexpr uint8_t CHASSIS_PROTOCOL_MEB = 2;
-constexpr uint8_t CHASSIS_PROTOCOL_MAX = CHASSIS_PROTOCOL_MEB;
+// VAG LIN 1.3 car (V1.17, for a newer wheel in an Audi A8 D3). The car is the
+// LIN master and asks for the wheel's OWN frames, in the LIN 1.3 shape with
+// the classic checksum: 0x30 (6 bytes) and 0x21 (2 bytes). It also publishes
+// 0x01 (2 bytes) and 0x10 (3 bytes, lane-assist vibration). Nothing here is
+// 0x0D / 0x0E. See encodeLin13ChassisFrame() in LIN.cpp.
+constexpr uint8_t CHASSIS_PROTOCOL_LIN13 = 3;
+constexpr uint8_t CHASSIS_PROTOCOL_MAX = CHASSIS_PROTOCOL_LIN13;
 extern volatile uint8_t chassisProtocol;
+
+// millis() of the last heated-wheel button press seen on a VW wheel's 0x3A
+// (byte 1 flips FF <-> FE per press: the RS6 wheel has no button code for it).
+// 0 = none yet. Turned into a held heater button for a LIN 1.3 car.
+extern volatile uint32_t wheelHeaterPressMs;
+// LIN 1.3 chassis (A8 D3): steps subtracted from the rim temperature sent to
+// the car (0x30 d5), so it heats warmer. 0 = as measured. NVS "heatOfs".
+constexpr uint8_t HEATER_TEMP_OFFSET_MAX = 15;
+extern volatile uint8_t heaterTempOffset;
 
 extern volatile uint8_t latestLinButtonId;
 extern volatile uint32_t latestLinButtonTimestamp;

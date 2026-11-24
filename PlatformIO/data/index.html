@@ -8,8 +8,8 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="touchui.css?v=1.16">
-  <link rel="stylesheet" href="style.css?v=1.16">
+  <link rel="stylesheet" href="touchui.css?v=1.18">
+  <link rel="stylesheet" href="style.css?v=1.18">
 </head>
 
 <body>
@@ -133,7 +133,15 @@
               <option value="1">MQB (default)</option>
               <option value="0">PQ (older VAG)</option>
               <option value="2">MEB (ID.x, pre-2024)</option>
+              <option value="3">VAG LIN 1.3 (Audi A8 D3 etc.; frame 0x30)</option>
             </select>
+          </label>
+          <label id="heaterTempOffsetRow" style="display:none">
+            Heated wheel: warmer by (steps, 0&ndash;15)
+            <input id="heaterTempOffset" type="number" min="0" max="15" step="1" value="0">
+            <span class="hint">The car is told the rim is this many steps colder, so it heats
+              further (about 1&nbsp;&deg;C per step, not confirmed). 0 = as measured. The cut-off on the
+              wheel's real reading still applies.</span>
           </label>
           <div id="mqbActRow" class="mqb-act-row">
             <label>
@@ -838,9 +846,9 @@
     </section>
   </main>
 
-  <script src="touchui.js?v=1.16"></script>
-  <script src="app.js?v=1.16"></script>
-  <script src="ota.js?v=1.16"></script>
+  <script src="touchui.js?v=1.18"></script>
+  <script src="app.js?v=1.18"></script>
+  <script src="ota.js?v=1.18"></script>
 </body>
 
 </html>

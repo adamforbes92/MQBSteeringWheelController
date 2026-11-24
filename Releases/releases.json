@@ -1,11 +1,54 @@
 {
-  "product": "MQBSteeringWheelController-main",
-  "latest": "1.17",
+  "product": "MQBSteeringWheelController",
+  "latest": "1.18",
   "latestByBoard": {
-    "esp32": "1.17",
-    "esp32s3": "1.17"
+    "esp32": "1.18",
+    "esp32s3": "1.18"
   },
   "releases": [
+    {
+      "version": "1.18",
+      "channel": "stable",
+      "date": "2026-11-24",
+      "ota": true,
+      "notes": "Audi A8 D3 (VAG LIN 1.3 chassis): the RS6 heated-wheel button now latches - one press on, next press off (it only heated while held). New Setup option 'Heated wheel: warmer by'. Heater button polled faster so quick taps aren't missed.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.18/firmware.bin",
+            "size": 1206048,
+            "sha256": "9deda424435b92f1f71dc8ea275b977daabbf821cb59a4712e3376dbd918d972"
+          },
+          "filesystem": {
+            "path": "V1.18/littlefs.bin",
+            "size": 655360,
+            "sha256": "473ebabff15796d7007c881a72497cc09495422b8aca6f510c38f32e79fe5423"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.18-S3/firmware.bin",
+            "size": 1185024,
+            "sha256": "47c86b595be628d8b68daa2f07f51468bb1c58e4545aee8189f91811522fcadf"
+          },
+          "filesystem": {
+            "path": "V1.18-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "e0e25b13108a18ea085129fb6bf906627708986a8c97ba3172942e6f9a68c961"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.18/firmware.bin",
+        "size": 1206048,
+        "sha256": "9deda424435b92f1f71dc8ea275b977daabbf821cb59a4712e3376dbd918d972"
+      },
+      "filesystem": {
+        "path": "V1.18/littlefs.bin",
+        "size": 655360,
+        "sha256": "473ebabff15796d7007c881a72497cc09495422b8aca6f510c38f32e79fe5423"
+      }
+    },
     {
       "version": "1.17",
       "channel": "stable",

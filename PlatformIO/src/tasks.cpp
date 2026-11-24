@@ -268,9 +268,11 @@ static void steeringWheelLinTask(void* parameter) {
       if (linAccInId != 0) {
         getAccButtonState();  // acc buttons merge into the same output pipeline
       }
-      // Temperature is informational only — poll ~once per second to avoid adding
-      // a per-cycle blocking transaction that would slow button response.
-      if (linTempInId != 0 && ++tempPollDivider >= 10) {
+      // Temperature: ~once per second normally. Into a LIN 1.3 car (A8 D3) its
+      // byte 1 is also the heated-wheel button, so ~every 200 ms there, or a
+      // short tap falls between two polls. A 2-byte frame, a few ms each.
+      const uint8_t tempEvery = (chassisProtocol == CHASSIS_PROTOCOL_LIN13) ? 2 : 10;
+      if (linTempInId != 0 && ++tempPollDivider >= tempEvery) {
         tempPollDivider = 0;
         getTemperatureState();
       }

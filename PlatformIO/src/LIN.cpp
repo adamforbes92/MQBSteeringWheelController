@@ -952,6 +952,130 @@ static bool collectBytes(uint8_t* out, uint8_t n, uint32_t timeoutMs)
 // why the chassis never responded properly outside passthru.
 static uint8_t chassisResponseFrame[8] = {};
 
+// ---------------------------------------------------------------------------
+// LIN 1.3 car (CHASSIS_PROTOCOL_LIN13, V1.17): what the car gets when it asks
+// for the wheel's own frames. Requested by a customer fitting an RS6 wheel to
+// an Audi A8 D3 (Messenger, 24/11/2026). From his captures:
+//
+//   docs/lin_monitor_log.csv-5..10, 13.json  the D3's own wheel (bench)
+//     0x30  6 bytes classic   d0 = counter 0-F, d1 = 90 A0 10 20 30 40 50 60
+//                             by (d0 & 7), d2 = button code (0 at rest),
+//                             d3 = 08 while the heated-wheel button is held,
+//                             d4 = roller nibbles, d5 = rim temperature
+//                             (~44-4B at 21 C, rises when heated, FF = sensor
+//                             open)
+//     0x21  2 bytes classic   23 01, never changes
+//   docs/lin_monitor_log.csv-15.json  passthru in the car (V1.16 relay)
+//     0x01  car -> wheel      5E 03 / 5F 03 alternating (bench master: 50 03)
+//     0x10  car -> wheel      3 bytes, only while lane assist vibrates:
+//                             F3 / F5 / F8 = weak / middle / high, byte 1
+//                             toggles bit 5 (35/15, 38/18, 3D/1D) - not
+//                             decoded further, and NOT passed to the new
+//                             wheel (its vibration frame isn't known yet);
+//                             it shows in the LIN Monitor as a LIN2 frame.
+//
+// Built from chassisResponseFrame (the translated, MQB-shaped frame), the
+// inverse of decodeAudiFrame(): byte 1 code -> d2, or 0xF1 / 0xF2 -> a
+// movement in d4's high / low nibble (from byte 3); byte 2 -> d0's high
+// nibble; byte 7 -> d3. So a row's "new" code is the car's 0x30 byte 2 code,
+// F1 / F2 for its rollers, and a row whose source byte is 7 sets d3 bits.
+//
+// The heated-wheel button: a VW wheel reports it only in 0x3A byte 1 (bit 0
+// clear while held), so each press (wheelHeaterPressMs, set on the press edge
+// only) holds d3 = 08 for kLin13HeatHoldMs - one press of the D3's own button,
+// which the car toggles the heater on.
+//
+// d5, the rim temperature, is what the car regulates the heater on, so it is
+// only ever the wheel's real reading (RS6 0x3A byte 0 reads ~46 at 21 C, the
+// D3's sensor 44-4B, so the scales look alike - NOT confirmed). Stale (> 3 s),
+// no sensor, or at/over 0x62 (VW's cut-off) -> FF "sensor open", which the car
+// treats as a fault rather than a cold rim.
+// ---------------------------------------------------------------------------
+constexpr uint8_t  kLin13ChassisStatus[2] = {0x23, 0x01};  // the D3 wheel's 0x21
+constexpr uint8_t  kLin13D1[8] = {0x90, 0xA0, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
+constexpr uint32_t kLin13HeatHoldMs = 300;
+constexpr uint8_t  kLin13TempCutoff = 0x62;
+
+static void encodeLin13ChassisFrame(const uint8_t* mqb, uint8_t* out)
+{
+  static uint8_t counter = 0;
+  counter = (uint8_t)((counter + 1) & 0x0F);
+
+  const uint8_t bi = (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
+  const uint8_t rb = linRotaryByteIndex;
+  const uint8_t code = mqb[bi];
+  const uint8_t move = (rb < 8) ? (uint8_t)(mqb[rb] & 0x0F) : 0;
+
+  memset(out, 0, audiButtonLen);
+  out[0] = (uint8_t)(((mqb[2] & 0x0F) << 4) | counter);
+  out[1] = kLin13D1[counter & 0x07];
+  if (code == 0xF1)      out[4] = (uint8_t)(move << 4);
+  else if (code == 0xF2) out[4] = move;
+  else                   out[2] = code;
+  out[3] = mqb[7];
+
+  const uint32_t now = millis();
+  const uint32_t pressMs = wheelHeaterPressMs;
+  if (pressMs != 0 && now - pressMs < kLin13HeatHoldMs)
+  {
+    out[3] |= 0x08;
+  }
+
+  const uint32_t tMs = wheelTempMs;
+  const uint8_t t = wheelTempRaw;
+  const bool fresh = tMs != 0 && now - tMs < 3000 && wheelTempSrc != WHEEL_TEMP_SRC_NONE;
+  // heaterTempOffset ("warmer by", Setup): the car is told the rim is that
+  // many steps colder, so it heats that much further. The cut-off is still on
+  // the wheel's real reading.
+  const uint8_t ofs = heaterTempOffset;
+  uint8_t shown = (t > ofs) ? (uint8_t)(t - ofs) : 0x01;
+  out[5] = (fresh && t < kLin13TempCutoff) ? shown : 0xFF;
+}
+
+// Answer a LIN 1.3 car's header for `id` on LIN2: classic checksum, the
+// D3 wheel's own lengths. Returns false for an ID we don't answer.
+static bool answerLin13Chassis(uint8_t id)
+{
+  uint8_t frame[audiButtonLen + 1];
+  uint8_t n = 0;
+  if (id == audiButtonID)
+  {
+    uint8_t mqb[8];
+    portENTER_CRITICAL(&stateMux);
+    memcpy(mqb, chassisResponseFrame, sizeof(mqb));
+    portEXIT_CRITICAL(&stateMux);
+    encodeLin13ChassisFrame(mqb, frame);
+    n = audiButtonLen;
+  }
+  else if (id == audiStatusID)
+  {
+    memcpy(frame, kLin13ChassisStatus, sizeof(kLin13ChassisStatus));
+    n = audiStatusLen;
+  }
+  else
+  {
+    return false;
+  }
+
+  frame[n] = calculateClassicChecksum(frame, n);
+  Serial2.write(frame, n + 1);
+  Serial2.flush();
+  uint8_t echo[audiButtonLen + 1];
+  collectBytes(echo, n + 1, 10);  // our own bytes, read back by the transceiver
+  chassisLinLastOkMs = millis();
+
+  if (id == audiButtonID)
+  {
+    portENTER_CRITICAL(&stateMux);
+    memset(lastLinOutFrame, 0, sizeof(lastLinOutFrame));
+    memcpy(lastLinOutFrame, frame, n);
+    lastLinOutLen = sizeof(lastLinOutFrame);
+    lastLinOutId = audiButtonID;
+    portEXIT_CRITICAL(&stateMux);
+  }
+  return true;
+}
+
 // Continuously listens to the chassis/BCM bus (LIN2) for ANY valid header
 // (SYNC + protected ID) and reacts according to that ID's real role on the
 // bus — this device is a SLAVE on LIN2, never the master (see below), so it
@@ -1543,6 +1667,10 @@ void serviceChassisLinBus()
 
   const uint8_t lightPid = calculateProtectedId(linLightInId);
   const uint8_t buttonPid = calculateProtectedId(linButtonInId);
+  // LIN 1.3 car: it asks for 0x30 and 0x21 (PIDs F0 / 61) instead of 0x0E.
+  const bool lin13Chassis = (chassisProtocol == CHASSIS_PROTOCOL_LIN13);
+  const uint8_t lin13BtnPid = calculateProtectedId(audiButtonID);
+  const uint8_t lin13StatusPid = calculateProtectedId(audiStatusID);
 
   while (Serial2.available())
   {
@@ -1574,7 +1702,8 @@ void serviceChassisLinBus()
       continue;
     }
     const uint8_t pid = window[1];
-    const bool known = (pid == lightPid) || (pid == buttonPid);
+    const bool lin13Pid = lin13Chassis && (pid == lin13BtnPid || pid == lin13StatusPid);
+    const bool known = (pid == lightPid) || (pid == buttonPid) || lin13Pid;
     // Only a real header ends or starts an unhandled frame: valid parity and
     // a BREAK (read as 0x00) just ahead of the SYNC. A 0x55 inside some other
     // frame's data must not cut that frame short.
@@ -1651,6 +1780,15 @@ void serviceChassisLinBus()
       unkActive = true;
       unkLen = 0;
       unkLastUs = micros();
+      continue;
+    }
+
+    // LIN 1.3 car (normal mode; Passthru relays the real wheel above instead):
+    // answer its 0x30 / 0x21 asks in the D3 wheel's own shape. With LIN output
+    // off they are left unanswered and logged like any other header.
+    if (lin13Pid && linOutputEnabled && answerLin13Chassis((uint8_t)(pid & 0x3F)))
+    {
+      windowLen = 0;
       continue;
     }
 
@@ -3105,7 +3243,10 @@ void sendButtonLINFrame()
   // below); an unmapped button code is cleared with its movement/stage byte
   // too, since the wheel's 0x5C1-style codes aren't the car's LIN codes. Done
   // before shaping, which turns that byte into a PQ chassis' position.
-  if (!wheelIsVwLin2())  // every decoded profile: LIN 1.3, Volvo, K-bus, Custom
+  // Same for ANY wheel into a LIN 1.3 car: bytes 2 and 7 become that car's
+  // 0x30 byte 0 high nibble and byte 3 (encodeLin13ChassisFrame()), so a VW
+  // wheel's own byte 7 (horn) must not land there unless a row puts it there.
+  if (!wheelIsVwLin2() || chassisProtocol == CHASSIS_PROTOCOL_LIN13)
   {
     response[2] = 0;
     response[5] = 0;
@@ -3451,6 +3592,19 @@ void getTemperatureState()
   // climbed 4B -> 56 with the heater on; byte 1 stayed FE while it was on and
   // flipped FF <-> FE as its button was pressed. For the Diagnostics card.
   noteWheelTemp(buf[0], WHEEL_TEMP_SRC_0X3A);
+  // The heated-wheel button (it has no 0x0E code): byte 1 bit 0 clears while
+  // it is held (RS6: FF -> FE on press, back to FF on release; the customer:
+  // "when I hold the heating button the heater is on, when released it's off",
+  // which is what V1.17 did by pulsing the car on BOTH edges). Only the press
+  // edge counts now, so one press = one D3 button press = the car toggles the
+  // heater once. The first frame only sets the starting state.
+  static bool haveHeater = false;
+  if (haveHeater && (wheelHeaterByte & 0x01) && !(buf[1] & 0x01))
+  {
+    wheelHeaterPressMs = millis() | 1U;
+    logLine("[SW] heated-wheel button pressed (0x3A byte 1 %02X -> %02X)", wheelHeaterByte, buf[1]);
+  }
+  haveHeater = true;
   wheelHeaterByte = buf[1];
 }
 

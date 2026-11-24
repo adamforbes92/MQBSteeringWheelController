@@ -38,8 +38,9 @@ the S3) and the OTA tab only offers releases carrying images for the board it ru
 | Accessory buttons | Polls a second wheel frame (default ID `0x0F`) and feeds its buttons through the same mapping pipeline |
 | Temperature frame | Polls a wheel temperature frame (default ID `0x3A`) for the LIN monitor; on heated wheels byte 0 is the rim temperature and byte 1 a heater flag, shown on **Diagnostics → Wheel Heater Sensor** |
 | Configurable LIN IDs | All four incoming frame IDs are user-editable, so wheels using non-standard IDs are supported |
-| Wheel protocol | Selectable PQ / MQB wheel protocol; MQB wheels are enabled with a different backlight activation frame |
-| Chassis protocol | Independent PQ / MQB / MEB selector for the button frame sent to the chassis/BCM — any wheel↔chassis combination bridges (PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB, PQ/MQB wheel → MEB ID.x) |
+| Wheel protocol | A **profile** per wheel family: PQ, MQB, VAG LIN 1.3 (Audi A4 / A8, early PQ35), VW Up! / Citigo / Mii, Volvo P1 / P3, BMW E-series / Mini K-bus, or Custom — see [Wheel profiles](#wheel-profiles) |
+| Chassis protocol | Independent PQ / MQB / MEB / **VAG LIN 1.3** selector for what the car is sent — any wheel↔chassis combination bridges (PQ↔MQB, MQB/PQ wheel → MEB ID.x, a newer wheel → an Audi A8 D3) |
+| Heated wheels | Rim temperature and heater button read from the wheel (VW `0x3A`, LIN 1.3 `0x30` byte 5) and shown live on **Diagnostics → Wheel Heater Sensor**; into an A8 D3 the heater button and temperature are passed to the car, with an optional **warmer by** setting |
 | Protocol-aware button codes | Changing either protocol offers to update known PQ/MQB/MEB button codes to match — rows already learned or customised are left alone |
 | BCM live status | Dashboard shows the chassis LIN light frame's brightness and raw bytes independently of the active backlight source, so BCM presence is visible even under Aux/Forced |
 | Settings import/export | Back up and restore the full configuration (including the button map) as a JSON file |
@@ -73,18 +74,34 @@ If you want to purchase an assembled controller, you can do so here: [LIN MFSW C
 Designed for VAG multi-function steering wheels that report buttons over a **LIN slave
 response** and (optionally) carry paddle shifters and a LIN-dimmed backlight. Button IDs,
 LIN frame IDs and the CAN/GRA frame set are **car- and wheel-specific** — treat the
-shipped `buttonMappings[]` table (in [src/globals.cpp](PlatformIO/src/globals.cpp)) as a known-good
+shipped `buttonMappings[]` table (in [src/globals.cpp](src/globals.cpp)) as a known-good
 baseline and re-learn each button to suit your hardware. Both **PQ** and **MQB** are
 supported on **each side independently** — pick the wheel family in **Setup → Wheel
 Protocol** and the chassis/BCM family in **Setup → Chassis Protocol** (see
 [LIN Frame Structure](#lin-frame-structure--protocols)), so any combination bridges:
 PQ↔PQ, PQ↔MQB, MQB↔PQ, MQB↔MQB. **MEB** (ID.3 / ID.4 / ID.7 / ID. Buzz) is a third
 chassis choice, for fitting an MQB (or PQ) wheel to an ID.x car — see
-[MEB chassis](#meb-chassis-idx). If your wheel's buttons aren't recognised at all, watch
-the **LIN Monitor** while pressing them to find the frame and byte that change.
+[MEB chassis](#meb-chassis-idx). **VAG LIN 1.3** (Audi A8 D3 and other LIN 1.3 cars) is a
+fourth, for fitting a newer wheel to an older Audi — see
+[VAG LIN 1.3 chassis](#vag-lin-13-chassis-audi-a8-d3-etc). Wheels other than PQ / MQB are
+read through **wheel profiles** (see [Wheel profiles](#wheel-profiles)). If your wheel's
+buttons aren't recognised at all, the controller scans for it and the **LIN Monitor** shows
+what answered; press the buttons to find the frame and byte that change.
 
-> Frame IDs and calibration live in [include/defs.h](PlatformIO/include/defs.h) and
-> [src/globals.cpp](PlatformIO/src/globals.cpp). The resistive output values are tuned to your
+Wheels and cars seen so far (captures in `docs/`):
+
+| Wheel / car | Profile | Status |
+| --- | --- | --- |
+| VW PQ wheels | PQ | customer car, working |
+| VW / Skoda / Seat MQB wheels | MQB | our bench wheel, working |
+| Audi RS6 C6 wheel (heated) | PQ (VW `0x0E` + `0x3A`) | customer bench logs; heater button + temperature read from `0x3A` |
+| Audi A8 D3 wheel (heated) | VAG LIN 1.3 | customer bench logs; heater button `08`, temperature byte 5 |
+| Audi A8 D3 car | Chassis: VAG LIN 1.3 | customer car captures; RS6 wheel fitted, buttons, heater latch and temperature in test (V1.18) |
+| MQB wheel in an ID.4 / ID. Buzz | Chassis: MEB | customer report (PR #2) |
+| Volvo P1 / P3, BMW K-bus, VW Up! | their own profiles | from published code only, not tested on a wheel |
+
+> Frame IDs and calibration live in [include/defs.h](include/defs.h) and
+> [src/globals.cpp](src/globals.cpp). The resistive output values are tuned to your
 > radio's resistor ladder — characterise them with the **Test Resistance** diagnostic or a datasheet for your radio.
 
 ---
@@ -133,7 +150,7 @@ from `lib_deps`, and the ESP32 platform (pioarduino) is downloaded on the first 
 
 ### Pin Map
 
-Defined in [include/defs.h](PlatformIO/include/defs.h):
+Defined in [include/defs.h](include/defs.h):
 
 | Group | Signal | DevKit GPIO | S3 board GPIO |
 | --- | --- | --- | --- |
@@ -372,6 +389,40 @@ captures it reads `00`–`64`, which looks like a brightness but isn't confirmed
 activation bytes from **Setup → Activation preset**. waldo22 found `7F F9 FF FF` wakes the
 Atlas buttons, i.e. the **Custom** preset with `F9 FF FF`.
 
+### VAG LIN 1.3 chassis (Audi A8 D3 etc.)
+
+Added in V1.17 for a customer fitting an RS6 wheel to an Audi A8 D3. A LIN 1.3 car doesn't use
+`0x0D` / `0x0E`: it asks for its own wheel's frames, with the classic checksum. Choose
+**VAG LIN 1.3** as the Chassis Protocol and turn **Passthru off**; the controller then answers
+the car the way the D3's own wheel did (customer captures, `docs/lin_monitor_log.csv-5…15.json`):
+
+| Frame | What the controller sends |
+| --- | --- |
+| `0x30` (6 bytes) | byte 0 counter, byte 1 the D3's counter pattern, byte 2 the row's **new** code, byte 3 `08` for the heated-wheel button, byte 4 the rollers, byte 5 the rim temperature |
+| `0x21` (2 bytes) | `23 01`, the D3 wheel's own value |
+
+- **Button codes:** a row's new code is the D3 wheel's own byte-2 code. `F1` / `F2` send a
+  scroll movement on byte 4's high / low nibble. A row learned on byte 7 sets byte 3 bits.
+  The change prompt doesn't fill these in, because the D3 codes aren't known yet.
+- **Heated wheel:** the RS6 wheel reports its button only in `0x3A` byte 1: `FE` while it is
+  held, `FF` when released. Each **press** (`FF` → `FE`) is sent to the car as one press of the
+  D3 button (`08` for 300 ms), and the car toggles the heater. Up to V1.17 the release sent a
+  second press, so the heater was only on while the button was held. Into this chassis
+  `0x3A` is polled every 200 ms (otherwise ~1 s), so a quick tap isn't missed. It needs no
+  Learn row (it has no button code to learn).
+- **Warmer:** **Setup → Heated wheel: warmer by** (0–15 steps, shown with this chassis) tells
+  the car the rim is that many steps colder than measured, so it heats further, about 1 °C a
+  step (not confirmed). The `62` cut-off is still applied to the wheel's real reading.
+- **Rim temperature:** byte 5 is the wheel's own `0x3A` reading, which is what the car
+  regulates the heater on. If the reading is missing, more than 3 s old, or at/over `62`, the
+  car gets `FF` ("sensor open") instead. **The two wheels' scales look alike (about `46` at
+  21 °C) but this isn't confirmed**, so watch the rim temperature on the first test.
+- **Not passed on yet:** the car's lane-assist vibration (`0x10`, `F3` / `F5` / `F8` = weak /
+  middle / high), because the new wheel's vibration frame isn't known. It shows in the LIN
+  Monitor. The car's `0x01` (`5E 03` / `5F 03`) isn't decoded either, so set the backlight
+  source to Aux or Forced.
+- Not tested in a car yet.
+
 ### VAG LIN 1.3 wheel — ID `0x30` (wheel → master)
 
 **Wheel Protocol → VAG LIN 1.3** is for wheels that don't answer `0x0E` at all. They use LIN
@@ -500,7 +551,7 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.16** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.18** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -870,11 +921,17 @@ A power-cycle (ignition off/on) brings Wi-Fi back.
 
 ## Version History
 
-The firmware version (`FW_VERSION` in [include/defs.h](PlatformIO/include/defs.h)) is shown on the
+The firmware version (`FW_VERSION` in [include/defs.h](include/defs.h)) is shown on the
 OTA tab. The full history lives in
-[include/ver.h](PlatformIO/include/ver.h):
+[include/ver.h](include/ver.h):
 
 ```
+V1.18 — A8 D3 chassis: the RS6 heated-wheel button latches (one press = heater on, next = off;
+        V1.17 also sent the release, so it only heated while held); 0x3A polled every 200 ms
+        there; new Setup "Heated wheel: warmer by" (0–15 steps off the temperature the car sees)
+V1.17 — VAG LIN 1.3 Chassis Protocol (Audi A8 D3 etc.): answers the car's 0x30 / 0x21 polls in
+        the D3 wheel's own shape, classic checksum; RS6 heated-wheel button and rim temperature
+        passed on; lane-assist vibration not yet
 V1.16 — Passthru relays every frame both ways, byte for byte, whatever its ID, length and
         checksum (LIN 2.x, LIN 1.x or none valid) — the car's frames to the wheel and the
         wheel's answers to the car (needed to fit the module in a car with a LIN 1.3 wheel)

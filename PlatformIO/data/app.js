@@ -479,8 +479,18 @@ function protocolColumns() {
     chassisCol,
     // A LIN 1.3 wheel (2) is not treated as sharing codes with any chassis:
     // its decoded codes are its own, so they are never passed through as-is.
-    sameFamily: !wheelIsDecoded(wp) && CODE_COLUMN_FAMILY[wheelCol] === CODE_COLUMN_FAMILY[chassisCol],
+    // Nor is a LIN 1.3 car (chassis 3): its codes are its own wheel's.
+    sameFamily: !wheelIsDecoded(wp) && !chassisIsLin13(cp) &&
+      CODE_COLUMN_FAMILY[wheelCol] === CODE_COLUMN_FAMILY[chassisCol],
   };
+}
+
+// Chassis 3: a VAG LIN 1.3 car (Audi A8 D3...). It asks for its own wheel's
+// 0x30 frame, so a row's new code is that wheel's byte-2 code, F1 / F2 for its
+// rollers; none of the PQ/MQB/MEB code sets apply.
+function chassisIsLin13(v) {
+  const cp = v != null ? String(v) : document.getElementById("chassisProtocol").value;
+  return cp === "3";
 }
 
 // True when (old, nw) is a known button's code pair across two DIFFERENT
@@ -572,6 +582,11 @@ function promptApplyProtocolDefaults(changed) {
   // button set, so there is nothing to translate them from.
   if (wheelIsDecoded()) {
     setStatus("LIN 1.3 wheel: use Learn on each row, then pick the code for the car.");
+    return;
+  }
+  if (chassisIsLin13()) {
+    setStatus("LIN 1.3 car: set each row's new code to the car's own wheel code (F1 / F2 = its rollers). " +
+      "The heated-wheel button is passed on by itself. Turn Passthru off for this to run.");
     return;
   }
   const candidateCount = applyProtocolDefaultsToMappings({ dryRun: true, changed });
@@ -824,10 +839,13 @@ function wireControls() {
   const chassisProtocol = document.getElementById("chassisProtocol");
   if (chassisProtocol) {
     chassisProtocol.addEventListener("change", () => {
+      updateHeaterOffsetUi();
       saveSetup();
       promptApplyProtocolDefaults("chassis");
     });
   }
+  const heaterTempOffset = document.getElementById("heaterTempOffset");
+  if (heaterTempOffset) heaterTempOffset.addEventListener("change", saveSetup);
 
   // Diagnostic: PNP toggle.
   document.getElementById("diagPnpActive").addEventListener("change", async function () {
@@ -1242,6 +1260,8 @@ async function loadSetup() {
     document.getElementById("mqbActByte2").value = hex2(setup.mqbActByte2 != null ? setup.mqbActByte2 : 0x00);
     document.getElementById("mqbActByte3").value = hex2(setup.mqbActByte3 != null ? setup.mqbActByte3 : 0x00);
     document.getElementById("chassisProtocol").value = String(setup.chassisProtocol != null ? setup.chassisProtocol : 1);
+    document.getElementById("heaterTempOffset").value = Number(setup.heaterTempOffset || 0);
+    updateHeaterOffsetUi();
     document.getElementById("charismaMode").value = String(setup.charismaMode != null ? setup.charismaMode : 0);
     document.getElementById("charismaButtonBit").value = String(setup.charismaButtonBit != null ? setup.charismaButtonBit : 22);
     document.getElementById("charismaProgramCount").value = Number(setup.charismaProgramCount || 4);
@@ -1800,9 +1820,10 @@ async function saveSetup() {
     mqbActByte1: parseHexByte("mqbActByte1", 0xFF),
     mqbActByte2: parseHexByte("mqbActByte2", 0x00),
     mqbActByte3: parseHexByte("mqbActByte3", 0x00),
-    // 0 PQ, 1 MQB, 2 MEB; anything else falls back to MQB (the firmware does the same).
-    chassisProtocol: [0, 1, 2].includes(Number(document.getElementById("chassisProtocol").value))
+    // 0 PQ, 1 MQB, 2 MEB, 3 VAG LIN 1.3; anything else falls back to MQB (the firmware does the same).
+    chassisProtocol: [0, 1, 2, 3].includes(Number(document.getElementById("chassisProtocol").value))
       ? Number(document.getElementById("chassisProtocol").value) : 1,
+    heaterTempOffset: clamp(num(document.getElementById("heaterTempOffset").value), 0, 15),
     charismaMode: Number(document.getElementById("charismaMode").value) || 0,
     charismaButtonBit: Number(document.getElementById("charismaButtonBit").value) || 22,
     charismaProgramCount: clamp(num(document.getElementById("charismaProgramCount").value), 2, 15) || 4,
@@ -1938,6 +1959,13 @@ function hex3(v) {
 // point (Mark's A8 D3 and RS6 C6 wheels both read about 0x46 in a 21 C room;
 // MQB's published raw - 68 put them at 2 C), with 1 C per step assumed.
 const WHEEL_TEMP_OFFSET = 49;
+// "Heated wheel: warmer by" only means something into a LIN 1.3 car (A8 D3),
+// where the controller reports the rim temperature itself (0x30 d5).
+function updateHeaterOffsetUi() {
+  const row = document.getElementById("heaterTempOffsetRow");
+  if (row) row.style.display = document.getElementById("chassisProtocol").value === "3" ? "" : "none";
+}
+
 function renderWheelTemp(s) {
   const card = document.getElementById("wheelTempCard");
   if (!card) return;

@@ -379,6 +379,7 @@ void setupApiServer() {
     doc["mqbActByte2"] = mqbActByte2;
     doc["mqbActByte3"] = mqbActByte3;
     doc["chassisProtocol"] = chassisProtocol;
+    doc["heaterTempOffset"] = heaterTempOffset;
     doc["charismaMode"] = charismaMode;
     doc["charismaButtonBit"] = charismaButtonBit;
     doc["charismaProgramCount"] = charismaProgramCount;
@@ -532,6 +533,8 @@ void setupApiServer() {
           int cp = doc["chassisProtocol"] | (int)chassisProtocol;
           chassisProtocol = (uint8_t)((cp >= CHASSIS_PROTOCOL_PQ && cp <= CHASSIS_PROTOCOL_MAX)
                                           ? cp : CHASSIS_PROTOCOL_MQB);
+          int ho = doc["heaterTempOffset"] | (int)heaterTempOffset;
+          heaterTempOffset = (uint8_t)(ho < 0 ? 0 : (ho > HEATER_TEMP_OFFSET_MAX ? HEATER_TEMP_OFFSET_MAX : ho));
         }
         {
           int cm = doc["charismaMode"] | (int)charismaMode;

@@ -5,6 +5,53 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.18 - A8 D3 heated wheel: latch + "warmer by" (24/11/2026). Customer (Mark,
+        Messenger, on V1.17 in the car): "When I hold steering wheel heating
+        button, heater is on. When release it's off" - and the button can't be
+        learned (it's not in 0x0E). The RS6's 0x3A byte 1 is momentary (FE
+        held, FF released); V1.17 pulsed the car's d3 = 08 on every flip, so
+        press + release = two D3 presses = on, then off. getTemperatureState()
+        now sets wheelHeaterPressMs only on the press edge (bit 0 1 -> 0), and
+        tasks.cpp polls 0x3A every 2 cycles (~200 ms, was ~1 s) when Chassis
+        Protocol is LIN 1.3, so a short tap isn't lost between polls. He also
+        asked for a way to make the wheel warmer (VCDS can't on the D3):
+        heaterTempOffset (globals, NVS "heatOfs", /api/setup, 0..15) is taken
+        off the rim temperature sent to the car in 0x30 d5 (floor 01); the 0x62
+        cut-off still tests the wheel's real reading. UI: "Heated wheel: warmer
+        by" under Chassis Protocol, shown only for LIN 1.3. His log 16
+        (docs/lin_monitor_log.csv-16.json, "sometimes it does this") shows the
+        car sending 0x10 F8 5D / F8 1D (lane-assist frame, "high") and once an
+        unanswered 0x10 header - what "this" was isn't stated; not acted on.
+V1.17 - VAG LIN 1.3 Chassis Protocol (24/11/2026). Customer request (Mark,
+        Messenger): an RS6 wheel in an Audi A8 D3, where Chassis Protocol only
+        offered PQ / MQB / MEB. CHASSIS_PROTOCOL_LIN13 = 3 (globals.h; /api/setup
+        and NVS accept it through CHASSIS_PROTOCOL_MAX). The D3 car is the LIN
+        master and asks for its own wheel's frames, classic checksum, which the
+        V1.16 relay captures showed (docs/lin_monitor_log.csv-13/15.json):
+        asks 0x30 (6 bytes) and 0x21 (2 bytes, D3 wheel: 23 01); sends 0x01
+        (5E 03 / 5F 03) and 0x10 (3 bytes, lane-assist vibration: F3 / F5 / F8
+        = weak / middle / high, byte 1 bit 5 toggling).
+        In normal mode with LIN output on, serviceChassisLinBus() answers F0 /
+        61 itself (answerLin13Chassis()): 0x30 = encodeLin13ChassisFrame(), the
+        inverse of decodeAudiFrame() over chassisResponseFrame: d0 = counter
+        (+ byte 2 as high nibble), d1 = 90 A0 10 20 30 40 50 60 by counter & 7
+        (D3 and first-A8 captures), d2 = row's new code, or F1 / F2 -> roller
+        movement in d4 high / low nibble, d3 = byte 7 bits, d5 = rim
+        temperature. 0x21 = 23 01. sendButtonLINFrame() now clears bytes 2/5/7
+        and unmapped codes for ANY wheel into this chassis (was decoded wheels
+        only), so a VW wheel's horn byte can't reach d3.
+        Heated wheel: the RS6 wheel has no 0x0E code for it, only 0x3A byte 1
+        flipping FF <-> FE per press (logs 11/12). getTemperatureState() now
+        records each flip (wheelHeaterPressMs, logged "[SW] heated-wheel
+        button"); the D3 car gets d3 = 08 for 300 ms per flip.
+        Rim temperature (d5, which the car regulates the heater on): the
+        wheel's own reading (0x3A byte 0, or a LIN 1.3 wheel's byte 5) while
+        under 3 s old and below 0x62; otherwise FF ("sensor open"). Scales look
+        alike (~46 at 21 C on both) - NOT confirmed.
+        NOT done: vibration to the new wheel (its frame is unknown); 0x01 not
+        decoded (backlight: use Aux / Forced). Web UI: option "VAG LIN 1.3
+        (Audi A8 D3 etc.; frame 0x30)", saved as 3; the protocol-change prompt
+        explains instead of translating codes. NOT tested in a car yet.
 V1.16 - Passthru relays any frame, any checksum (23/11/2026). For fitting
         the module in a customer's A8 to capture heating / vibration traffic.
         Up to V1.15 Passthru relayed only two frames and re-built them: the
