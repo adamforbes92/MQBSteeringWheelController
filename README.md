@@ -121,11 +121,14 @@ The firmware is a [PlatformIO](https://platformio.org/) project. On GitHub it li
    `pio run -e <env> -t uploadfs`. Both are needed on a fresh board. After that, the OTA tab
    can update both.
 
-The LIN library is **vendored** in `lib/LIN master portable`. It is
+The LIN master is **our own** small library in `lib/ForbesLin` (from V1.20): a blocking LIN
+master on the ESP32's `HardwareSerial` with a proper BREAK (it waits for the UART to finish
+before changing speed), LIN-spec timeouts counted from the header, and waits that yield the
+CPU. Up to V1.19 the firmware used
 [gicking/LIN_master_portable_Arduino](https://github.com/gicking/LIN_master_portable_Arduino)
-1.9 plus a small patch, `getRawRxBuffer()` in `LIN_master_Base.h`, which the upstream library
-doesn't have. PlatformIO picks up `lib/` automatically, so don't install the upstream library
-as well. The other libraries (AsyncTCP, ESPAsyncWebServer, ArduinoJson, X9C10X) are fetched
+1.9 with local patches; that copy is still in `lib/LIN master portable` for reference but is
+excluded from the build (`lib_ignore` in `platformio.ini`). PlatformIO picks up `lib/`
+automatically, so don't install any LIN library from the registry. The other libraries (AsyncTCP, ESPAsyncWebServer, ArduinoJson, X9C10X) are fetched
 from `lib_deps`, and the ESP32 platform (pioarduino) is downloaded on the first build.
 
 > **macOS / Linux:** `platformio.ini` sets `build_dir` and `libdeps_dir` to
@@ -551,7 +554,7 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.19** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.20** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -777,7 +780,8 @@ Outside Passthru Mode it records:
   ```
   `body` = when the header followed the BREAK (about 1.04 ms normally; more means the task was
   held up), `echo` = when our own header had come back, `gap` = the longest pause in the
-  library's frame loop (a stalled task shows here), `gave up` = when the timeout fired and its
+  library's frame loop (a stalled task shows here; from V1.20 about 1 ms is normal, because the
+  library sleeps 1 ms between checks), `gave up` = when the timeout fired and its
   limit, `done` = when the whole frame had actually arrived and how late that was, and whether
   the header echo read back correctly. A frame the wheel never answers isn't timed again until
   it answers (at most one report per 250 ms).
@@ -938,6 +942,9 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.20 — (beta) Our own LIN library, lib/ForbesLin, replacing the vendored one: the BREAK waits for
+        the UART before changing speed, timeouts follow the LIN spec from the header, and waiting
+        yields the CPU - for the occasionally missed wheel frames (lights going out)
 V1.19 — LIN Monitor: every missed LIN1 frame is timed (header, echo, longest stall, when the timeout
         fired, when the frame really arrived), to find why frames are missed (diagnostic build)
 V1.18 — A8 D3 chassis: the RS6 heated-wheel button latches (one press = heater on, next = off;

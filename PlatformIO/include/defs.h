@@ -3,7 +3,9 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
-#include "LIN_master_HardwareSerial_ESP32.h"
+// LIN master: our own small library (lib/ForbesLin, V1.20), replacing the
+// vendored "LIN master portable". It keeps that library's type names.
+#include "ForbesLin.h"
 #include "X9C10X.h"
 
 #include <AsyncTCP.h>
@@ -14,7 +16,7 @@
 #include "ver.h"
 #include "board.h"   // MFSW_BOARD_DEVKIT / MFSW_BOARD_S3 (set by platformio.ini)
 
-#define FW_VERSION "1.19"
+#define FW_VERSION "1.20"
 
 #define enableDebug 0
 #define debugIO 0

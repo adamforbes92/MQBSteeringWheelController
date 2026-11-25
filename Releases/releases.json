@@ -7,6 +7,49 @@
   },
   "releases": [
     {
+      "version": "1.20",
+      "channel": "beta",
+      "date": "2026-11-25",
+      "ota": true,
+      "notes": "BETA: our own LIN library, for the occasionally missed wheel frames (e.g. wheel lights going out). Not yet tested on every wheel - if anything gets worse, go back to 1.19.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.20/firmware.bin",
+            "size": 1206064,
+            "sha256": "76d56dea1b8439ad0a893ebf3aa17cdeeeaadd0e6f9939221cf208cf019eb714"
+          },
+          "filesystem": {
+            "path": "V1.20/littlefs.bin",
+            "size": 655360,
+            "sha256": "db3f0c5d62830ce2e2537d6a02ef4ed3dc1c805cd07342eb68034bef4f3c3c95"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.20-S3/firmware.bin",
+            "size": 1185024,
+            "sha256": "2711d5165ec1085c75f59177fbac0c61c9f1607880dde8186760c4fa6d3d4b2a"
+          },
+          "filesystem": {
+            "path": "V1.20-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "0d0375573816e13fe6c73b44052ab7bf232a9d49317bc4f3d84c0f7de007aa73"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.20/firmware.bin",
+        "size": 1206064,
+        "sha256": "76d56dea1b8439ad0a893ebf3aa17cdeeeaadd0e6f9939221cf208cf019eb714"
+      },
+      "filesystem": {
+        "path": "V1.20/littlefs.bin",
+        "size": 655360,
+        "sha256": "db3f0c5d62830ce2e2537d6a02ef4ed3dc1c805cd07342eb68034bef4f3c3c95"
+      }
+    },
+    {
       "version": "1.19",
       "channel": "stable",
       "date": "2026-11-25",

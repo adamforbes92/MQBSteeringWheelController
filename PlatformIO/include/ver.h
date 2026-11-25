@@ -5,6 +5,27 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.20 - (beta) Own LIN library, lib/ForbesLin (25/11/2026). Replaces the
+        vendored "LIN master portable" 1.9 (kept in lib/ but lib_ignore'd)
+        for the missed LIN1 frames on Mark's A8 D3 (wheel lights going out).
+        That library's ESP32 port: BREAK = 0x00 at half speed with the speed
+        switched back exactly two byte-times later without waiting for the
+        byte to leave the UART; timeout = 2 x nominal from BEFORE the BREAK;
+        busy-wait on available() with no yield. ForbesLinMaster (one class,
+        blocking): flush() + drain, BREAK 0x00 at half speed then flush()
+        (uart_wait_tx_done) before restoring the speed - the method the
+        Passthru relay already uses; SYNC + PID [+ data + checksum]; wait for
+        BREAK echo + SYNC + PID + data + checksum with a limit from the header
+        of 1.4 x nominal (LIN spec) + 2 ms for UART receive-idle delivery,
+        checking every 1 ms (vTaskDelay) instead of spinning; echo check of
+        our own header / master data (ERROR_ECHO), checksum check of slave
+        responses (classic V1 / enhanced V2, 0x3C/0x3D always classic). On a
+        timeout the bytes stay in the FIFO for the RAW residual / TIMING
+        diagnostics and the scan's length probe, as before. Keeps the old
+        names via aliases (LIN_Master_Base, LIN_Master_HardwareSerial_ESP32,
+        error_t / version_t values, getRawRxBuffer() with the same layout,
+        setBaudrate(), getTiming()), so the firmware above it is unchanged
+        apart from the include in defs.h. NOT tested on a wheel yet (beta).
 V1.19 - LIN1 missed-frame timing diagnostic (25/11/2026). Mark's A8 D3 (V1.18):
         the RS6 wheel's lights go out at times; his logs show isolated LIN1
         timeouts, including our own 0x0D light frame (only we drive it) and

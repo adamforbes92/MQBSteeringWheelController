@@ -1,0 +1,7 @@
+{
+  "name": "ForbesLin",
+  "version": "1.0.0",
+  "description": "Small blocking LIN master for the ESP32 (Arduino HardwareSerial): proper BREAK, LIN-spec timeouts from the header, yields while waiting. Drop-in for the subset of LIN_master_portable used by the MFSW Controller.",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
