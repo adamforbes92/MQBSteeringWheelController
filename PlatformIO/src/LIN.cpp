@@ -302,6 +302,106 @@ static bool notePollResult(PollHealth& h, uint8_t bus, uint8_t id, LIN_Master_Ba
   return false;
 }
 
+// LIN1 timing diagnostic (V1.19). Every MISSED LIN1 frame (the first failure
+// after it was answering - the health log only shows the first of a streak,
+// so isolated misses were invisible) gets one "TIMING" line, so we can see
+// WHY frames are missed instead of guessing. From the library's per-transaction timing
+// (getTiming(), a local patch), all in ms after the BREAK started:
+//   body    when the rest of the header was written (nominal 2 byte times,
+//           ~1.04 ms at 19200 - much more means the task was held up)
+//   echo    when our own BREAK+SYNC+PID had come back (0 = never)
+//   gave up when the library declared the timeout, and its limit
+//   gap     the longest pause between two runs of the library's frame loop -
+//           a stalled task (another task, flash write...) shows up here
+// Then it waits up to 20 ms for the rest of the frame and reports when it
+// was complete ("+x late") and whether the echo read back as 00 55 PID.
+// Reading the bytes empties the FIFO, so the RAW residual line after it is
+// usually empty - the bytes are on this line instead. At most one line per
+// 250 ms, and nothing in Passthru (which logs every attempt itself).
+// Only a frame that WAS answering: a frame this wheel never answers (e.g. an
+// RS6 and 0x0F) fails every poll by design, and timing that would just wait
+// 20 ms and fill the log forever. So it runs on the first failure after a
+// good answer - a missed frame - and not again until the frame answers.
+template <typename LinMaster>
+static void logLinTiming(const PollHealth& h, uint8_t id, LinMaster& lin, HardwareSerial& port,
+                         LIN_Master_Base::error_t err)
+{
+  if (err == LIN_Master_Base::NO_ERROR || passthruEnabled)
+  {
+    return;
+  }
+  if (h.id == id && h.failing)
+  {
+    return;  // already failing: a silent frame, not a missed one
+  }
+  static uint32_t lastMs = 0;
+  const uint32_t nowMs = millis();
+  if (lastMs != 0 && nowMs - lastMs < 250)
+  {
+    return;
+  }
+  lastMs = nowMs | 1U;
+
+  const auto t = lin.getTiming();
+  const bool timedOut = (err & LIN_Master_Base::ERROR_TIMEOUT) != 0;
+
+  // The bytes: on a timeout they are still arriving / in the FIFO, so wait up
+  // to 20 ms for the full frame; otherwise the library already read them.
+  uint8_t raw[16];
+  uint8_t n = 0;
+  uint32_t completeUs = 0;
+  if (timedOut)
+  {
+    const uint32_t waitStart = micros();
+    while (micros() - waitStart < 20000)
+    {
+      if (port.available() >= t.lenRx)
+      {
+        completeUs = micros() - t.startUs;
+        break;
+      }
+    }
+    while (port.available() && n < sizeof(raw))
+    {
+      raw[n++] = (uint8_t)port.read();
+    }
+  }
+  else
+  {
+    uint8_t len = 0;
+    const uint8_t* buf = lin.getRawRxBuffer(len);
+    for (n = 0; n < len && n < sizeof(raw); n++) raw[n] = buf[n];
+    completeUs = t.doneUs;
+  }
+
+  char hex[3 * sizeof(raw) + 1];
+  size_t pos = 0;
+  for (uint8_t i = 0; i < n; i++)
+  {
+    pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", raw[i]);
+  }
+  hex[pos ? pos - 1 : 0] = '\0';
+
+  const uint8_t pid = (uint8_t)(((id ^ (id >> 1) ^ (id >> 2) ^ (id >> 4)) & 0x01) << 6 |
+                                ((~((id >> 1) ^ (id >> 3) ^ (id >> 4) ^ (id >> 5)) & 0x01) << 7) |
+                                (id & 0x3F));
+  const char* echo = (n < 3) ? "missing" : (raw[1] == 0x55 && raw[2] == pid) ? "ok" : "BAD";
+
+  // Two lines: a log line holds 96 characters.
+  logLine("LIN1 0x%02X TIMING %s: body %.2f echo %.2f gap %.2f, gave up %.2f/%.2f ms",
+          id, linErrorLabel(err), t.bodyUs / 1000.0f, t.headerUs / 1000.0f, t.maxGapUs / 1000.0f,
+          t.doneUs / 1000.0f, t.timeoutUs / 1000.0f);
+  if (completeUs)
+  {
+    logLine("LIN1 0x%02X TIMING done %.2f (%+.2f) %u/%u echo %s: %s", id, completeUs / 1000.0f,
+            ((int32_t)(completeUs - t.doneUs)) / 1000.0f, (unsigned)n, (unsigned)t.lenRx, echo, hex);
+  }
+  else
+  {
+    logLine("LIN1 0x%02X TIMING never done %u/%u echo %s: %s", id, (unsigned)n, (unsigned)t.lenRx, echo, hex);
+  }
+}
+
 // One poll's result, logged per notePollResult(): the health line, then (when
 // it reported) the bytes that did arrive — stranded in the FIFO on a timeout,
 // or the full captured frame on a checksum error. Draining the FIFO is
@@ -310,6 +410,7 @@ template <typename LinMaster>
 static void reportPoll(PollHealth& h, uint8_t id, LinMaster& lin, HardwareSerial& port, LIN_Master_Base::error_t err,
                        bool remind = false)
 {
+  logLinTiming(h, id, lin, port, err);  // V1.19 diagnostic: each missed frame, timed
   if (notePollResult(h, 1, id, err, remind))
   {
     logLinRawResidual(1, id, port);
@@ -2778,6 +2879,7 @@ static void sendGenericLight()
   {
     logLinAttempt(1, s.lightId, d, s.lightLen, err, classic);
   }
+  logLinTiming(healthLight, s.lightId, steeringWheelLIN, Serial1, err);
   notePollResult(healthLight, 1, s.lightId, err);
   unlockLinBus(steeringWheelLinMutex);
 
@@ -3146,6 +3248,7 @@ void sendLightLINFrame()
   }
   // A master send failing means the bus itself is wrong (no echo of our own
   // bits: transceiver asleep, RX/TX swapped, shorted), not a quiet wheel.
+  logLinTiming(healthLight, txId, steeringWheelLIN, Serial1, err);
   notePollResult(healthLight, 1, txId, err);
 
   unlockLinBus(steeringWheelLinMutex);

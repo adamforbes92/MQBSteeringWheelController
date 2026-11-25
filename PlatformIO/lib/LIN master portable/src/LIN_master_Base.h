@@ -167,6 +167,14 @@ class LIN_Master_Base
     uint8_t                 bufRx[12];          //!< receive buffer incl. BREAK, SYNC, DATA and CHK (max. 12B)
     uint32_t                timeStart;          //!< starting time [us] for frame timeout
 
+    // LOCAL PATCH (not upstream): per-transaction timing, for diagnosing
+    // missed frames (see getTiming()). All in us after timeStart; 0 = not yet.
+    uint32_t                tmBodyUs;           //!< BREAK done, rest of the frame written
+    uint32_t                tmHeaderUs;         //!< BREAK+SYNC+PID echo all received
+    uint32_t                tmDoneUs;           //!< frame complete / timed out
+    uint32_t                tmMaxGapUs;         //!< longest gap between two handler() calls
+    uint32_t                tmLastCallUs;       //!< micros() of the previous handler() call
+
 
   // PUBLIC VARIABLES
   public:
@@ -335,6 +343,21 @@ class LIN_Master_Base
 
     /// @brief LOCAL PATCH: current bus speed (see setBaudrate()).
     inline uint16_t getBaudrate(void) const { return this->baudrate; }
+
+    /// @brief LOCAL PATCH (not upstream): timing of the last transaction, for
+    /// the main project's "LIN1 ... TIMING" diagnostic (src/LIN.cpp,
+    /// logLinTiming()). All in microseconds after the BREAK was started:
+    /// when the rest of the frame was written (BodyUs, nominally 2 byte times),
+    /// when the header echo was complete (HeaderUs), when the frame finished or
+    /// timed out (DoneUs), the timeout allowed (TimeoutUs), and the longest
+    /// gap between two handler() calls (MaxGapUs) - a stalled task shows here.
+    struct Timing { uint32_t startUs, bodyUs, headerUs, doneUs, timeoutUs, maxGapUs; uint8_t lenRx; };
+    inline Timing getTiming(void) const
+    {
+      Timing t = { this->timeStart, this->tmBodyUs, this->tmHeaderUs, this->tmDoneUs,
+                   this->timeoutFrame, this->tmMaxGapUs, this->lenRx };
+      return t;
+    }
 
     
     /// @brief Start sending a LIN master request frame in background (if supported)

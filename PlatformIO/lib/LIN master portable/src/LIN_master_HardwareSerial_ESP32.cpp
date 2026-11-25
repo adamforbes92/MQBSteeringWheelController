@@ -94,6 +94,7 @@ LIN_Master_Base::state_t LIN_Master_HardwareSerial_ESP32::_sendFrame(void)
 
     // send rest of frame (request frame: SYNC+ID+DATA[]+CHK; response frame: SYNC+ID)
     this->pSerial->write(this->bufTx+1, this->lenTx-1);
+    this->tmBodyUs = micros() - this->timeStart;  // LOCAL PATCH: timing
 
     // progress state
     this->state = LIN_Master_Base::STATE_BODY;
@@ -134,9 +135,14 @@ LIN_Master_Base::state_t LIN_Master_HardwareSerial_ESP32::_receiveFrame(void)
   if ((this->type == LIN_Master_Base::SLAVE_RESPONSE) && (this->pSerial->available() == 3))
     this->_disableTransmitter();
 
+  // LOCAL PATCH: timing - when the header echo (BREAK+SYNC+PID) was all in
+  if ((this->tmHeaderUs == 0) && (this->pSerial->available() >= 3))
+    this->tmHeaderUs = micros() - this->timeStart;
+
   // frame body received. Here, need to read BREAK as well due to delay of Serial.available()
   if (this->pSerial->available() >= this->lenRx)
   {
+    this->tmDoneUs = micros() - this->timeStart;  // LOCAL PATCH: timing
     // store bytes in Rx
     this->pSerial->readBytes(this->bufRx, this->lenRx);
 
@@ -161,6 +167,7 @@ LIN_Master_Base::state_t LIN_Master_HardwareSerial_ESP32::_receiveFrame(void)
       DEBUG_PRINT(1, "Rx timeout");
 
       // set error state and return immediately
+      this->tmDoneUs = micros() - this->timeStart;  // LOCAL PATCH: timing
       this->error = (LIN_Master_Base::error_t) ((int) this->error | (int) LIN_Master_Base::ERROR_TIMEOUT);
       this->state = LIN_Master_Base::STATE_DONE;
       this->_disableTransmitter();

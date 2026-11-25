@@ -1,11 +1,54 @@
 {
   "product": "MQBSteeringWheelController",
-  "latest": "1.18",
+  "latest": "1.19",
   "latestByBoard": {
-    "esp32": "1.18",
-    "esp32s3": "1.18"
+    "esp32": "1.19",
+    "esp32s3": "1.19"
   },
   "releases": [
+    {
+      "version": "1.19",
+      "channel": "stable",
+      "date": "2026-11-25",
+      "ota": true,
+      "notes": "LIN Monitor: every missed wheel frame is now timed (TIMING lines), to find out why frames are occasionally missed. No change to how the controller behaves.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.19/firmware.bin",
+            "size": 1207184,
+            "sha256": "6a0d02d7de317b779a29dcba4d05a3cdc9b0b567ecdec6608201da494a408933"
+          },
+          "filesystem": {
+            "path": "V1.19/littlefs.bin",
+            "size": 655360,
+            "sha256": "3a85ad8b0c06039709e80e9b527b7e3aa30ddf5e6665746d27fec15d76024884"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.19-S3/firmware.bin",
+            "size": 1186128,
+            "sha256": "5304d3891e6129d4c76db72bd5796d6e9071d6d1367532550f137d6e89da2a29"
+          },
+          "filesystem": {
+            "path": "V1.19-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "8d250309bce841526cc3da3943d9a79e31f80b0db02eda7d8c939a61dabeabc0"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.19/firmware.bin",
+        "size": 1207184,
+        "sha256": "6a0d02d7de317b779a29dcba4d05a3cdc9b0b567ecdec6608201da494a408933"
+      },
+      "filesystem": {
+        "path": "V1.19/littlefs.bin",
+        "size": 655360,
+        "sha256": "3a85ad8b0c06039709e80e9b527b7e3aa30ddf5e6665746d27fec15d76024884"
+      }
+    },
     {
       "version": "1.18",
       "channel": "stable",

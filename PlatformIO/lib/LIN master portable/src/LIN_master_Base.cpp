@@ -322,6 +322,8 @@ LIN_Master_Base::state_t LIN_Master_Base::sendMasterRequest(LIN_Master_Base::ver
   // set break timeout (= 200% nominal) and start timeout
   this->timeStart    = micros();
   this->timeoutFrame = ((this->lenRx + 1) * this->timePerByte) * 2;
+  this->tmBodyUs = this->tmHeaderUs = this->tmDoneUs = this->tmMaxGapUs = 0;  // LOCAL PATCH: timing
+  this->tmLastCallUs = this->timeStart;
 
   // print debug message
   DEBUG_PRINT(2, " ");
@@ -393,6 +395,8 @@ LIN_Master_Base::state_t LIN_Master_Base::receiveSlaveResponse(LIN_Master_Base::
   // set break timeout (= 200% nominal) and start timeout
   this->timeoutFrame   = ((this->lenRx + 1) * this->timePerByte) * 2;
   this->timeStart = micros();
+  this->tmBodyUs = this->tmHeaderUs = this->tmDoneUs = this->tmMaxGapUs = 0;  // LOCAL PATCH: timing
+  this->tmLastCallUs = this->timeStart;
 
   // print debug message
   DEBUG_PRINT(2, " ");
@@ -450,6 +454,15 @@ LIN_Master_Base::state_t LIN_Master_Base::handler(void)
 {
   // print debug message
   DEBUG_PRINT(3, "state=%d", (int) this->state);
+
+  // LOCAL PATCH: longest gap between two calls while a frame is in progress
+  if ((this->state == LIN_Master_Base::STATE_BREAK) || (this->state == LIN_Master_Base::STATE_BODY))
+  {
+    const uint32_t nowUs = micros();
+    const uint32_t gapUs = nowUs - this->tmLastCallUs;
+    if (gapUs > this->tmMaxGapUs) this->tmMaxGapUs = gapUs;
+    this->tmLastCallUs = nowUs;
+  }
 
   // act according to current state
   switch (this->state)

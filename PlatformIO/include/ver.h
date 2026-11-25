@@ -5,6 +5,22 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.19 - LIN1 missed-frame timing diagnostic (25/11/2026). Mark's A8 D3 (V1.18):
+        the RS6 wheel's lights go out at times; his logs show isolated LIN1
+        timeouts, including our own 0x0D light frame (only we drive it) and
+        complete, valid frames found in the FIFO just after a "timeout" (e.g.
+        0x3A: 00 55 BA 58 FE ED). Rather than guess the cause (task stall vs.
+        the library's timing: BREAK faked by a half-baud 0x00 with zero margin,
+        timeout = 2x nominal counted from before the BREAK), V1.19 measures it.
+        Library (local patch): per-transaction timing - tmBodyUs (header
+        written), tmHeaderUs (header echo in), tmDoneUs (done / timed out),
+        tmMaxGapUs (longest gap between handler() calls), getTiming().
+        LIN.cpp logLinTiming(): on the first failure after a frame was
+        answering (reportPoll() and both 0x0D light-send paths), waits up to
+        20 ms for the rest of a timed-out frame and logs two "TIMING" lines:
+        body / echo / gap / gave-up vs limit, then when it was really complete
+        (+late), bytes received / expected, header echo check (00 55 PID).
+        At most one per 250 ms; not in Passthru. No behaviour change otherwise.
 V1.18 - A8 D3 heated wheel: latch + "warmer by" (24/11/2026). Customer (Mark,
         Messenger, on V1.17 in the car): "When I hold steering wheel heating
         button, heater is on. When release it's off" - and the button can't be

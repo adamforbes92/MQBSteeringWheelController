@@ -551,7 +551,7 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.18** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.19** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -769,6 +769,18 @@ Outside Passthru Mode it records:
   ```
   Up to V1.09 a wheel speaking another protocol left the monitor completely empty, which looks
   the same as nothing connected.
+- **Missed-frame timing** (`TIMING`, new in V1.19). When a LIN1 frame that was answering fails,
+  two lines say why, all times in ms from the start of the BREAK:
+  ```
+  LIN1 0x3A TIMING TIMEOUT: body 1.05 echo 2.60 gap 0.03, gave up 7.29/7.29 ms
+  LIN1 0x3A TIMING done 7.90 (+0.61) 6/6 echo ok: 00 55 BA 58 FE ED
+  ```
+  `body` = when the header followed the BREAK (about 1.04 ms normally; more means the task was
+  held up), `echo` = when our own header had come back, `gap` = the longest pause in the
+  library's frame loop (a stalled task shows here), `gave up` = when the timeout fired and its
+  limit, `done` = when the whole frame had actually arrived and how late that was, and whether
+  the header echo read back correctly. A frame the wheel never answers isn't timed again until
+  it answers (at most one report per 250 ms).
 - **Wheel detect** (`[SCAN]`). Once the button frame has had no valid answer for 5 s (at most
   once a minute, and only when the result changes), or on request (`POST /api/lin/scan`),
   every LIN1 ID `0x00`–`0x3B` is asked for a response. Whatever answers is listed with its
@@ -926,6 +938,8 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.19 — LIN Monitor: every missed LIN1 frame is timed (header, echo, longest stall, when the timeout
+        fired, when the frame really arrived), to find why frames are missed (diagnostic build)
 V1.18 — A8 D3 chassis: the RS6 heated-wheel button latches (one press = heater on, next = off;
         V1.17 also sent the release, so it only heated while held); 0x3A polled every 200 ms
         there; new Setup "Heated wheel: warmer by" (0–15 steps off the temperature the car sees)
