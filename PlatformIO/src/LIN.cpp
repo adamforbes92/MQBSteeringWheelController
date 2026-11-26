@@ -429,6 +429,26 @@ static inline uint8_t mappingSourceByte(const ButtonMapping& m)
   return (linButtonByteIndex < 8) ? linButtonByteIndex : 1;
 }
 
+// The byte of the car's frame the row's "To car" code goes in (V1.21):
+// carByte when set, else the same byte the wheel sent it on.
+static inline uint8_t mappingCarByte(const ButtonMapping& m)
+{
+  if (m.carByte >= 1 && m.carByte < 8) return m.carByte;
+  return mappingSourceByte(m);
+}
+
+// Put row m's code in the car's frame. When the car reads it on another byte
+// than the wheel sends it on (an RS6 wheel's paddles on byte 6 -> an A8 D3's
+// byte 7), the wheel's own value in its byte is cleared, so it isn't passed
+// on as well.
+static inline void placeCarCode(uint8_t* frame, const ButtonMapping& m)
+{
+  const uint8_t sb = mappingSourceByte(m);
+  const uint8_t cb = mappingCarByte(m);
+  if (cb != sb) frame[sb] = 0;
+  frame[cb] = m.newLinButtonId;
+}
+
 // Free-running nibble counter for the chassis-bound button frame's byte 0,
 // matching real MQB gateway captures where that byte increments each send.
 // Shared across both chassis protocols; PQ additionally tags it with 0x80.
@@ -601,7 +621,11 @@ static void captureLearned(uint8_t value, uint8_t byteIdx, int8_t rotary)
   }
   else if (learnTarget == LEARN_NEW_LIN)
   {
+    // The car's code AND where it was found (V1.21), learned from whatever
+    // byte changed - so a car that reads a button on another byte than the
+    // new wheel sends it on still gets it in the right place.
     buttonMappings[learnRowIndex].newLinButtonId = value;
+    buttonMappings[learnRowIndex].carByte = (byteIdx >= 1 && byteIdx < 8) ? byteIdx : 0;
   }
   // LEARN_NEW_CAN removed: CAN assignment is now explicit byte+bit selection, not learned
 
@@ -3410,7 +3434,7 @@ void sendButtonLINFrame()
         }
 
         buildChassisButtonFrame(buttonMappings[i].newLinButtonId, transButtonDataLIN);
-        response[mappingSourceByte(buttonMappings[i])] = buttonMappings[i].newLinButtonId;
+        placeCarCode(response, buttonMappings[i]);
 
         // Extend the CAN hold window on every LIN poll cycle that sees this button active
         if (buttonMappings[i].canByteIndex < 8 && buttonMappings[i].canBitIndex < 8)
@@ -3476,7 +3500,7 @@ void sendButtonLINFrame()
     {
       continue;
     }
-    response[mappingSourceByte(buttonMappings[i])] = buttonMappings[i].newLinButtonId;
+    placeCarCode(response, buttonMappings[i]);
     break;
   }
 

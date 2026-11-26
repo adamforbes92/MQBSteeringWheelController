@@ -375,6 +375,13 @@ void loadPreferences() {
     if (bytesExpected > 0 && bytesStored >= bytesExpected) {
       preferences.getBytes("mapBlob", buttonMappings, bytesExpected);
       buttonMappingCount = mapCount;
+      // V1.21: carByte lives in what used to be the struct's padding byte. A
+      // table saved before then has whatever happened to be there, so clear
+      // it once ("same byte as the wheel", the old behaviour); the next save
+      // sets "mapCarV" and from then on carByte is real data.
+      if (!preferences.isKey("mapCarV")) {
+        for (size_t i = 0; i < buttonMappingCount; i++) buttonMappings[i].carByte = 0;
+      }
     }
   }
   // Migration: maps saved before these rows existed won't contain them, so
@@ -462,6 +469,7 @@ void loadPreferences() {
 void savePreferences() {
   preferences.putUInt("mapCount",      (uint32_t)buttonMappingCount);
   preferences.putBytes("mapBlob",      buttonMappings, buttonMappingCount * sizeof(ButtonMapping));
+  preferences.putBool("mapCarV",       true);  // mapBlob's carByte is real data (V1.21)
   preferences.putBool("canBc",         canBroadcastEnabled);
   preferences.putUShort("canId",       canBroadcastId);
   preferences.putUShort("canKbit",     canBitrateKbit);

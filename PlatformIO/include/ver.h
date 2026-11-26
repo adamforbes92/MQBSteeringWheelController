@@ -5,7 +5,31 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
-V1.20 - (beta) Own LIN library, lib/ForbesLin (25/11/2026). Replaces the
+V1.21 - "To car" byte per button row + web server on core 0 (26/11/2026).
+        Mark (A8 D3 + RS6 wheel): paddles do nothing in the car. The Fit
+        wizard's own warning said why: the D3 reads them in frame byte 7 (->
+        its 0x30 byte 3: 02 = +, 01 = -), the RS6 sends them on byte 6, and a
+        row's code was always written back into the byte it came from. Adam:
+        learning should work on any byte rather than be wheel-specific - so
+        instead of a D3 special case, each row now also stores the CAR's byte.
+        ButtonMapping.carByte (defs.h; in the struct's old tail padding, so the
+        size stays 34 and the NVS mapBlob layout is unchanged - static_assert;
+        a table saved before V1.21 has it cleared once on load until "mapCarV"
+        is set by the next save). 0 = same byte as sourceByte (old behaviour).
+        Learn "To car" (LEARN_NEW_LIN) stores the byte it captured from;
+        placeCarCode() writes a matched / latched row's code on carByte and
+        clears the wheel's own value in sourceByte when they differ. /api/setup
+        mappings carry "carByte" (export / import too). Web UI: Fit wizard step
+        1 saves row.carByte (it already captured it, only to warn); the step 4
+        warning is gone; the To car field's tooltip names the car's byte when
+        it differs. Scroll wizard rows keep it.
+        Light flicker: Mark confirmed the wheel lights only flicker while a
+        phone is connected to the controller's Wi-Fi. AsyncTCP's task (priority
+        10) defaulted to "any core"; build_flags now pin it to core 0
+        (CONFIG_ASYNC_TCP_RUNNING_CORE=0) with the Wi-Fi stack, away from the
+        LIN tasks on core 1. If it still flickers, the V1.19 TIMING lines tell
+        a stall (large gap) from corrupted bits (echo BAD / CHK).
+V1.20 - Own LIN library, lib/ForbesLin (25/11/2026; beta, then stable with V1.21). Replaces the
         vendored "LIN master portable" 1.9 (kept in lib/ but lib_ignore'd)
         for the missed LIN1 frames on Mark's A8 D3 (wheel lights going out).
         That library's ESP32 port: BREAK = 0x00 at half speed with the speed

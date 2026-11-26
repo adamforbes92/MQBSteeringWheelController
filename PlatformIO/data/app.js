@@ -53,7 +53,7 @@ async function mergeLearnedCodes() {
     fresh.forEach((f, i) => {
       const m = mappings[i];
       if (!m) return;
-      for (const k of ["oldButtonId", "newLinButtonId", "sourceByte"]) {
+      for (const k of ["oldButtonId", "newLinButtonId", "sourceByte", "carByte"]) {
         if (num(m[k]) !== num(f[k])) { m[k] = f[k]; changed = true; }
       }
       // Learn also sets the trigger when it recognises a scroll wheel. Only
@@ -354,7 +354,7 @@ function finishScrollWizard() {
     if (dir === keepDir) {
       return { ...row, name, newLinButtonId: scrollOut, flags: (num(row.flags) & ~TRIGGER_MASK) | dir };
     }
-    return { ...blank, name, oldButtonId: code, newLinButtonId: scrollOut, flags: dir, sourceByte: num(row.sourceByte) };
+    return { ...blank, name, oldButtonId: code, newLinButtonId: scrollOut, flags: dir, sourceByte: num(row.sourceByte), carByte: num(row.carByte) };
   };
   const rows = [scrollRow(FLAG_ROTARY_UP), scrollRow(FLAG_ROTARY_DOWN)];
   if (wiz.press) {
@@ -1584,7 +1584,7 @@ function renderMappings() {
       <td class="c-name"><input data-field="name" data-idx="${idx}" type="text" maxlength="17" value="${escapeAttr(row.name || "")}" aria-label="Name"></td>
       <td class="c-more"><button class="btn tiny secondary row-more" data-more="${idx}" type="button" aria-expanded="${open}"><span class="row-more-sum">${escapeAttr(outputsSummary(row))}</span><span class="row-more-arrow">${open ? "&#9652;" : "&#9662;"}</span></button></td>
       <td class="c-from" data-label="From wheel"><div class="code-cell"><span class="code-pre">0x</span><input class="hex-input${srcByteSuspect(row) ? " warn-cell" : ""}" data-field="oldButtonId" data-idx="${idx}" ${hexAttrs} value="${hex2(num(row.oldButtonId))}" title="Code the fitted wheel sends. ${srcByteHint(row)}" aria-label="From wheel code (hex)"><button class="btn tiny secondary" data-learn="old" data-idx="${idx}" type="button" title="Learn: press this, then the button on the wheel fitted now">Learn</button></div></td>
-      <td class="c-to" data-label="To car"><div class="code-cell"><span class="code-pre">0x</span><input class="hex-input" data-field="newLinButtonId" data-idx="${idx}" ${hexAttrs} value="${hex2(num(row.newLinButtonId))}" title="Code passed on to the car (chassis LIN output)" aria-label="To car code (hex)"${exDis}><button class="btn tiny secondary" data-learn="lin" data-idx="${idx}" type="button" title="Learn: press this, then the button on a wheel the car already understands"${exDis}>Learn</button></div></td>
+      <td class="c-to" data-label="To car"><div class="code-cell"><span class="code-pre">0x</span><input class="hex-input" data-field="newLinButtonId" data-idx="${idx}" ${hexAttrs} value="${hex2(num(row.newLinButtonId))}" title="Code passed on to the car (chassis LIN output)${num(row.carByte) && num(row.carByte) !== effByte(row.sourceByte) ? `, on frame byte ${num(row.carByte)} (the wheel sends it on byte ${effByte(row.sourceByte)})` : ""}" aria-label="To car code (hex)"${exDis}><button class="btn tiny secondary" data-learn="lin" data-idx="${idx}" type="button" title="Learn: press this, then the button on a wheel the car already understands"${exDis}>Learn</button></div></td>
       <td class="c-out" data-label="CAN byte"><select data-field="canByteIndex" data-idx="${idx}" title="Which byte of the CAN frame this button sets a bit in. &#8212; means NO CAN output for this row (the default for new rows)."${exDis}>${byteOptions}</select></td>
       <td class="c-out" data-label="CAN bit"><input data-field="canBitIndex" data-idx="${idx}" type="number" min="0" max="7" value="${bitIdx}"${exDis}></td>
       <td class="c-out" data-label="Resistive (&Omega;)"><input data-field="resistiveOhm" data-idx="${idx}" type="number" min="0" max="20000" value="${num(row.resistiveOhm)}"${exDis}></td>
@@ -1841,6 +1841,7 @@ async function saveSetup() {
       flags: num(m.flags),
       openHaldexMode: (typeof m.openHaldexMode === "number") ? m.openHaldexMode : 0,
       sourceByte: (typeof m.sourceByte === "number" && m.sourceByte < 8) ? m.sourceByte : 0,
+      carByte: (typeof m.carByte === "number" && m.carByte < 8) ? m.carByte : 0,
     })),
   };
 
@@ -2588,6 +2589,7 @@ function onFitCapture(code, byte, rotary, force = false) {
 
   if (fit.step === 1) {
     row.newLinButtonId = code;
+    row.carByte = byte;  // V1.21: saved with the row - the car's code goes back on this byte
     fit.carByte.set(row, byte);
     fit.got.set(row, { code, byte });
     fit.skipped.delete(row);
@@ -2991,10 +2993,9 @@ function fitWarnings() {
     if (!num(m.newLinButtonId) && !outputs) {
       out.push(`“${name}” does nothing yet: set its To car code or an output in the table below.`);
     }
-    const cb = fit.carByte.get(m);
-    if (cb !== undefined && effByte(cb) !== effByte(m.sourceByte) && !(f & 0x0C)) {
-      out.push(`“${name}”: the car's code came from frame byte ${effByte(cb)}, the new wheel sends it on byte ${effByte(m.sourceByte)}. The controller passes it on in byte ${effByte(m.sourceByte)}, which the car may not read.`);
-    }
+    // Up to V1.20 a code the car read on another byte than the new wheel sends
+    // it on was passed on in the wheel's byte, and this warned about it. Since
+    // V1.21 the row keeps the car's byte (carByte) and the code goes there.
   });
   return out;
 }

@@ -256,7 +256,7 @@ Each of the up to 24 rows in the button map carries:
 | --- | --- |
 | **Name** | Purely for understanding, not used in code (e.g. `Volume +`) |
 | **From wheel** | The code the fitted wheel sends for this button (`oldButtonId`, shown in hex) — learnable |
-| **To car** | The code passed on to the car on the chassis LIN output in its place (`newLinButtonId`, hex) — learnable |
+| **To car** | The code passed on to the car on the chassis LIN output in its place (`newLinButtonId`, hex) — learnable. Learning it also records **which frame byte** the car reads it on (`carByte`, V1.21; hover the field to see it), so a button the car reads on another byte than the new wheel sends it on — e.g. an RS6 wheel's paddles on byte 6 into an A8 D3 that reads them on byte 7 — is sent on the car's byte. Not set = the same byte as the wheel |
 | **CAN Byte / Bit** | Which bit of the 8-byte CAN frame to set (byte `0xFF`/255 = no CAN) |
 | **Resistive Output (Ohm)** | Resistance to present on the X9C10X while held (0 = none) |
 | **MOSFET** | Flag: drive the high-side output while pressed |
@@ -405,7 +405,10 @@ the car the way the D3's own wheel did (customer captures, `docs/lin_monitor_log
 | `0x21` (2 bytes) | `23 01`, the D3 wheel's own value |
 
 - **Button codes:** a row's new code is the D3 wheel's own byte-2 code. `F1` / `F2` send a
-  scroll movement on byte 4's high / low nibble. A row learned on byte 7 sets byte 3 bits.
+  scroll movement on byte 4's high / low nibble. A row whose **To car** code was learned on
+  byte 7 sets byte 3 bits, whichever byte the new wheel sends it on (from V1.21) — that is
+  how the D3's paddles (`02` / `01` in byte 3) work with an RS6 wheel, whose paddles arrive on
+  byte 6. Up to V1.20 they were sent on byte 6, which this car doesn't read.
   The change prompt doesn't fill these in, because the D3 codes aren't known yet.
 - **Heated wheel:** the RS6 wheel reports its button only in `0x3A` byte 1: `FE` while it is
   held, `FF` when released. Each **press** (`FF` → `FE`) is sent to the car as one press of the
@@ -554,7 +557,7 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.20** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.21** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -697,8 +700,9 @@ and Chrome, and downloads nothing).
    wheel didn't have and learns it next (on a same-family wheel and car its To car code is set
    to the same code; otherwise set what it does in the table).
 4. **Test & save** — the table is saved, and each press on the new wheel lights its row (an
-   unused code is named too). Warnings list rows that now do nothing, and rows whose code the
-   car read from a different frame byte than the new wheel sends it on. **Export backup**
+   unused code is named too). Warnings list rows that now do nothing. A row whose code the
+   car read on a different frame byte than the new wheel sends it on is fine since V1.21:
+   step 1 saves the car's byte with the row and the code goes back on it. **Export backup**
    downloads the configuration.
 
 **Cancel** in step 1 puts the table back; in step 3 it puts back the table as it was at the
@@ -942,7 +946,10 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
-V1.20 — (beta) Our own LIN library, lib/ForbesLin, replacing the vendored one: the BREAK waits for
+V1.21 — Each button row remembers which byte the CAR reads its code on (learned with To car), so a
+        button can move between bytes (RS6 paddles on byte 6 -> A8 D3 byte 7); the Fit wizard
+        saves it. Web server pinned to core 0 (wheel lights flickered while on the Wi-Fi)
+V1.20 — Our own LIN library, lib/ForbesLin, replacing the vendored one: the BREAK waits for
         the UART before changing speed, timeouts follow the LIN spec from the header, and waiting
         yields the CPU - for the occasionally missed wheel frames (lights going out)
 V1.19 — LIN Monitor: every missed LIN1 frame is timed (header, echo, longest stall, when the timeout

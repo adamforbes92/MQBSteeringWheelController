@@ -404,6 +404,7 @@ void setupApiServer() {
       row["flags"] = buttonMappings[i].flags;
       row["openHaldexMode"] = buttonMappings[i].openHaldexMode;  // 0-5 or 255 (push-to-next)
       row["sourceByte"] = buttonMappings[i].sourceByte;  // 0 = default byte; set by Learn (e.g. 6/7)
+      row["carByte"] = buttonMappings[i].carByte;        // 0 = same byte as sourceByte (V1.21)
     }
     addRollerCodes(doc);
 
@@ -583,6 +584,8 @@ void setupApiServer() {
             {
               int sb = row["sourceByte"] | 0;
               buttonMappings[i].sourceByte = (uint8_t)((sb >= 0 && sb < 8) ? sb : 0);
+              int cb = row["carByte"] | 0;
+              buttonMappings[i].carByte = (uint8_t)((cb >= 0 && cb < 8) ? cb : 0);
             }
           }
           buttonMappingCount = newCount;

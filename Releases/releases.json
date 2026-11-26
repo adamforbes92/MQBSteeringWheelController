@@ -1,17 +1,60 @@
 {
   "product": "MQBSteeringWheelController",
-  "latest": "1.19",
+  "latest": "1.21",
   "latestByBoard": {
-    "esp32": "1.19",
-    "esp32s3": "1.19"
+    "esp32": "1.21",
+    "esp32s3": "1.21"
   },
   "releases": [
     {
+      "version": "1.21",
+      "channel": "stable",
+      "date": "2026-11-26",
+      "ota": true,
+      "notes": "Paddles and other buttons can now be sent to the car on a different byte than the new wheel uses (e.g. RS6 wheel paddles in an A8 D3) - re-run Fit a new wheel, or re-learn To car. The web page no longer disturbs the wheel bus (lights flickering while connected to the controller's Wi-Fi).",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.21/firmware.bin",
+            "size": 1206288,
+            "sha256": "71add88a8a7d96ab6dab45e4e62dd08bff6e8721b62383a4f6b5a448f5d4a0a0"
+          },
+          "filesystem": {
+            "path": "V1.21/littlefs.bin",
+            "size": 655360,
+            "sha256": "6c06a39a0586e4ba4ce5fcc7618f750d4ded9b9522ed09f7a5fd75815fdd0a47"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.21-S3/firmware.bin",
+            "size": 1185232,
+            "sha256": "884adff5b3c707079ed52098e751f25efa5760a98f7b22ea0b489bf886456d4b"
+          },
+          "filesystem": {
+            "path": "V1.21-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "b3a767508981fd1e8eb5a20586e860b8d4de6e5ca7c2ccb65963d8b1e2005afe"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.21/firmware.bin",
+        "size": 1206288,
+        "sha256": "71add88a8a7d96ab6dab45e4e62dd08bff6e8721b62383a4f6b5a448f5d4a0a0"
+      },
+      "filesystem": {
+        "path": "V1.21/littlefs.bin",
+        "size": 655360,
+        "sha256": "6c06a39a0586e4ba4ce5fcc7618f750d4ded9b9522ed09f7a5fd75815fdd0a47"
+      }
+    },
+    {
       "version": "1.20",
-      "channel": "beta",
+      "channel": "stable",
       "date": "2026-11-25",
       "ota": true,
-      "notes": "BETA: our own LIN library, for the occasionally missed wheel frames (e.g. wheel lights going out). Not yet tested on every wheel - if anything gets worse, go back to 1.19.",
+      "notes": "Our own LIN library, for the occasionally missed wheel frames (e.g. wheel lights going out).",
       "boards": {
         "esp32": {
           "firmware": {

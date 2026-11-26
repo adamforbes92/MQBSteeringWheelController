@@ -16,7 +16,7 @@
 #include "ver.h"
 #include "board.h"   // MFSW_BOARD_DEVKIT / MFSW_BOARD_S3 (set by platformio.ini)
 
-#define FW_VERSION "1.20"
+#define FW_VERSION "1.21"
 
 #define enableDebug 0
 #define debugIO 0
@@ -288,7 +288,15 @@ struct ButtonMapping {
   uint8_t flags;         // bit 0: PNP, bit 1: latch, bit 2: OpenHaldex control
   uint8_t openHaldexMode; // 0-5 fixed OpenHaldex mode, 0xFF = push-to-next (used when FLAG_OPENHALDEX_CONTROL set)
   uint8_t sourceByte;    // which button-frame byte carries this button (0 = use default byte); set by Learn (e.g. 6 paddle, 7 horn)
+  // V1.21: which byte of the frame sent to the CAR carries the "To car" code
+  // (0 = the same byte as sourceByte, as up to V1.20). Learned like sourceByte,
+  // on the car side: e.g. an RS6 wheel's paddles arrive on byte 6 but an A8 D3
+  // car reads them on byte 7. Sits in what was the struct's tail padding, so
+  // the size (and the NVS "mapBlob" layout) is unchanged and older saved
+  // tables load with 0 here.
+  uint8_t carByte;
 };
+static_assert(sizeof(ButtonMapping) == 34, "ButtonMapping is stored raw in NVS (mapBlob): keep its size");
 
 enum LearnTarget : uint8_t {
   LEARN_NONE = 0,
