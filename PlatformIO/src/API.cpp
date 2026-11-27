@@ -331,6 +331,8 @@ void setupApiServer() {
     doc["canBroadcastEnabled"] = canBroadcastEnabled;
     doc["canBroadcastId"] = canBroadcastId;
     doc["canBitrateKbit"] = canBitrateKbit;
+    doc["canOutputMode"] = canOutputMode;
+    doc["canVwIgnition"] = canVwIgnition;
     doc["paddlesEnabled"] = paddlesEnabled;
     doc["hasAuxLight"] = useAuxLightSource;
     doc["auxDimDuty"]    = auxDimDutyPct10;
@@ -472,6 +474,9 @@ void setupApiServer() {
         {
           int kb = doc["canBitrateKbit"] | (int)canBitrateKbit;
           canBitrateKbit = (uint16_t)((kb == 100 || kb == 125 || kb == 250 || kb == 500) ? kb : 500);
+          int cm = doc["canOutputMode"] | (int)canOutputMode;
+          canOutputMode = (uint8_t)((cm >= 0 && cm <= CAN_MODE_MAX) ? cm : CAN_MODE_FORBES);
+          canVwIgnition = doc["canVwIgnition"] | (bool)canVwIgnition;
         }
         linLegacyPins    = doc["linLegacyPins"]    | (bool)linLegacyPins;
         linButtonInId    = doc["linButtonInId"]    | (uint8_t)linButtonInId;

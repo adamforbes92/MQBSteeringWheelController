@@ -3436,6 +3436,14 @@ void sendButtonLINFrame()
         buildChassisButtonFrame(buttonMappings[i].newLinButtonId, transButtonDataLIN);
         placeCarCode(response, buttonMappings[i]);
 
+        // VW radio CAN (V1.22): the held row's To car code, refreshed every
+        // poll it is still held. 250 ms covers a missed poll or two.
+        if (buttonMappings[i].newLinButtonId != 0)
+        {
+          vwRadioCode = buttonMappings[i].newLinButtonId;
+          vwRadioUntilMs = millis() + 250;
+        }
+
         // Extend the CAN hold window on every LIN poll cycle that sees this button active
         if (buttonMappings[i].canByteIndex < 8 && buttonMappings[i].canBitIndex < 8)
         {

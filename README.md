@@ -49,7 +49,7 @@ the S3) and the OTA tab only offers releases carrying images for the board it ru
 | Legacy PCB mode | Reverses RX/TX on **both** LIN channels for older boards (applied at boot) |
 | Button re-mapping | Up to **24** mappings, each with a name, original ID, new LIN ID, CAN bit, resistance and flags |
 | LIN output | Sends the translated button as a LIN master request on the chassis bus (configurable ID) |
-| CAN output | Broadcasts an 8-byte button frame (configurable ID, default `0x1E0`) on 500 kbit/s TWAI |
+| CAN output | Broadcasts an 8-byte button frame (configurable ID, default `0x1E0`), or (V1.22) **VW radio CAN**: the `0x5C1` frames a Mk5 / Mk6 Golf wheel sends a radio, for aftermarket radios and steering-wheel-control interfaces — see [VW radio CAN](#vw-radio-can-0x5c1). 100–500 kbit/s |
 | Paddle via CAN | Emits a GRA (cruise/shift) frame (`0x38A`) carrying paddle up/down |
 | Resistive output | Drives an X9C10X digital pot to emulate a resistor-ladder radio input (per button specified ohms) |
 | High-side driver | Switchable output (up to 5A) — momentary or latched per button, plus diagnostic override |
@@ -281,6 +281,33 @@ independently knows a PQ, MQB and MEB code for (see the button code table under
 real-world value no longer matches either known code, so it's left alone automatically. If
 none of your rows are on a recognised code, the prompt says so instead of offering to change
 anything.
+
+### VW radio CAN (0x5C1)
+
+**Setup → CAN output format → VW radio CAN** (V1.22) makes the CAN output look like a PQ VW
+(Mk5 / Mk6 Golf) wheel talking to the radio on the **100 kbit/s** infotainment CAN, so an
+aftermarket radio or a steering-wheel-control interface made for those cars (e.g. InCarTec
+INT-066 / Aerpro HRIVW2) can read the buttons directly:
+
+| | |
+| --- | --- |
+| ID | `0x5C1`, 4 bytes |
+| While a button is held | `cc 00 00 60` every 100 ms (the first at once) |
+| On release | `00 00 00 60` once |
+| `cc` | the row's **To car** code |
+
+On a PQ wheel the To car codes are already the right ones: the wheel's own LIN codes are the
+codes the car puts on `0x5C1` — Prev `03`, Next `02`, Vol+ `06`, Vol− `07`, Return `29`,
+Phone `1A`, Mic `2A` (check the Mic row; the shipped table has `1A` for it). Set **CAN bus
+speed** to 100 kbit/s. **Also send ignition on** sends `0x2C3` = `01` every 100 ms, for an
+interface that waits to see the car switched on; only use it when the interface is wired to
+the controller alone, never on a car's own CAN.
+
+Source: the frame table in
+[AxesOfEvil/VW_MkVI_Dynaudio](https://github.com/AxesOfEvil/VW_MkVI_Dynaudio) (sniffed on a
+Mk6 GTI; `0x2C3` from hugovw1976's Golf 6 captures quoted there), found by James Reynolds
+(OBD Works) for a Mk6 wheel in a T5. The repeat interval and the release frame aren't
+published, and this hasn't been tested with an interface yet.
 
 ### OpenHaldex Control
 
@@ -557,7 +584,7 @@ Custom profile's **Auto** checksum go further: they read the raw bytes and test 
 ## Wi-Fi & Web Interface
 
 Connect to the **`MFSWController`** Wi-Fi access point (open network) and browse to
-**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.21** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
+**`http://192.168.1.1/`** or **`http://mfsw.local/`**. All changed settings are automatically saved (the button table has its own **Save Setup**). Current firmware version: **1.22** — this project's shared theme, Wi‑Fi manager and OTA manager are in fact the **origin** of the common modules now used across OpenHaldex, Can2Cluster, SpeedPulser, SpeedPulserPro, can2rpm and AirLift Controller.
 
 | Tab | Purpose |
 | --- | --- |
@@ -946,6 +973,9 @@ OTA tab. The full history lives in
 [include/ver.h](include/ver.h):
 
 ```
+V1.22 — CAN output format "VW radio CAN": the Mk5/Mk6 Golf wheel's 0x5C1 frames (code 00 00 60,
+        100 kbit/s) for aftermarket radios / SWC interfaces (InCarTec / Aerpro), optional
+        0x2C3 ignition-on; from github.com/AxesOfEvil/VW_MkVI_Dynaudio
 V1.21 — Each button row remembers which byte the CAR reads its code on (learned with To car), so a
         button can move between bytes (RS6 paddles on byte 6 -> A8 D3 byte 7); the Fit wizard
         saves it. Web server pinned to core 0 (wheel lights flickered while on the Wi-Fi)

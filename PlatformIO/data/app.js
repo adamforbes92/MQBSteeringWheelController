@@ -766,6 +766,15 @@ function wireControls() {
     const el = document.getElementById(id);
     if (el) el.addEventListener("change", saveSetup);
   });
+  const canOutputMode = document.getElementById("canOutputMode");
+  if (canOutputMode) {
+    canOutputMode.addEventListener("change", () => {
+      updateCanModeUi();
+      saveSetup();
+    });
+  }
+  const canVwIgnition = document.getElementById("canVwIgnition");
+  if (canVwIgnition) canVwIgnition.addEventListener("change", saveSetup);
   const canBitrate = document.getElementById("canBitrateKbit");
   if (canBitrate) {
     canBitrate.addEventListener("change", () => {
@@ -1244,6 +1253,9 @@ async function loadSetup() {
     document.getElementById("forceBacklightPctDisplay").textContent = pct;
     document.getElementById("canHoldMs").value = Number(setup.canHoldMs || 250);
     document.getElementById("canBitrateKbit").value = String(setup.canBitrateKbit || 500);
+    document.getElementById("canOutputMode").value = String(setup.canOutputMode || 0);
+    document.getElementById("canVwIgnition").checked = !!setup.canVwIgnition;
+    updateCanModeUi();
     document.getElementById("linOutputEnabled").checked = !!setup.linOutputEnabled;
     document.getElementById("linOutputId").value = hex2(setup.linOutputId != null ? setup.linOutputId : 0x0E);
     document.getElementById("digipot20kEnabled").checked = !!setup.digipot20kEnabled;
@@ -1800,6 +1812,8 @@ async function saveSetup() {
     forceBacklightPercent: Number(document.getElementById("forceBacklightPercent").value),
     canHoldMs: Math.max(50, num(document.getElementById("canHoldMs").value)) || 250,
     canBitrateKbit: Number(document.getElementById("canBitrateKbit").value) || 500,
+    canOutputMode: Number(document.getElementById("canOutputMode").value) === 1 ? 1 : 0,
+    canVwIgnition: document.getElementById("canVwIgnition").checked,
     linOutputEnabled: document.getElementById("linOutputEnabled").checked,
     linOutputId: parseInt(document.getElementById("linOutputId").value, 16) || 0x0E,
     digipot20kEnabled: document.getElementById("digipot20kEnabled").checked,
@@ -1960,6 +1974,16 @@ function hex3(v) {
 // point (Mark's A8 D3 and RS6 C6 wheels both read about 0x46 in a 21 C room;
 // MQB's published raw - 68 put them at 2 C), with 1 C per step assumed.
 const WHEEL_TEMP_OFFSET = 49;
+// CAN output format (V1.22): the VW radio format has a fixed ID (0x5C1), so
+// the CAN ID field only applies to the Forbes frame.
+function updateCanModeUi() {
+  const vw = document.getElementById("canOutputMode").value === "1";
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? "" : "none"; };
+  show("canBroadcastIdRow", !vw);
+  show("canVwIgnitionRow", vw);
+  show("canVwRadioHint", vw);
+}
+
 // "Heated wheel: warmer by" only means something into a LIN 1.3 car (A8 D3),
 // where the controller reports the rim temperature itself (0x30 d5).
 function updateHeaterOffsetUi() {

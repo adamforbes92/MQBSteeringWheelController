@@ -287,7 +287,56 @@ void serviceCharisma() {
   twaiSendStandardFrame(CHARISMA_07_ID, cha07, sizeof(cha07));
 }
 
+// VW radio CAN (canOutputMode VW_RADIO, V1.22), called every 50 ms from
+// debounceOutputTask: 0x5C1 "code 00 00 60" while a mapped button is held,
+// every 100 ms (first one at once), then one "00 00 00 60" on release - the
+// source says only "repeats periodically while held", so the release frame is
+// a harmless "no button" for interfaces that wait for one. Optional 0x2C3 = 01
+// (ignition on) every 100 ms, for an interface on a bus of its own that waits
+// for the car to be "on".
+static void broadcastVwRadioCAN() {
+  static bool    active  = false;
+  static uint8_t lastSent = 0;
+  static uint8_t tick    = 0;
+  tick = (uint8_t)((tick + 1) & 1);
+
+  const uint32_t now = millis();
+  const uint8_t code = ((int32_t)(vwRadioUntilMs - now) > 0) ? vwRadioCode : 0;
+  const uint8_t payload[4] = {code, 0x00, 0x00, 0x60};
+
+  portENTER_CRITICAL(&stateMux);
+  memset(lastCanOutFrame, 0, sizeof(lastCanOutFrame));
+  memcpy(lastCanOutFrame, payload, sizeof(payload));
+  lastCanOutLen = sizeof(payload);
+  lastCanOutId = VW_RADIO_BUTTON_ID;
+  portEXIT_CRITICAL(&stateMux);
+
+  if (!canBroadcastEnabled) {
+    active = false;
+    return;
+  }
+  if (canVwIgnition && tick == 0) {
+    const uint8_t ign[1] = {0x01};
+    twaiSendStandardFrame(VW_RADIO_IGNITION_ID, ign, sizeof(ign));
+  }
+  if (code != 0) {
+    if (!active || code != lastSent || tick == 0) {
+      twaiSendStandardFrame(VW_RADIO_BUTTON_ID, payload, sizeof(payload));
+      active = true;
+      lastSent = code;
+    }
+  } else if (active) {
+    twaiSendStandardFrame(VW_RADIO_BUTTON_ID, payload, sizeof(payload));  // release
+    active = false;
+    lastSent = 0;
+  }
+}
+
 void broadcastButtonsCAN() {
+  if (canOutputMode == CAN_MODE_VW_RADIO) {
+    broadcastVwRadioCAN();
+    return;
+  }
   static bool activeFrameSent = false;
   uint8_t payload[8] = {0};
   const uint32_t now = millis();

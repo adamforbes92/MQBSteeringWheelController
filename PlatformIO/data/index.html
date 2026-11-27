@@ -8,8 +8,8 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>MFSW Controller</title>
-  <link rel="stylesheet" href="touchui.css?v=1.21">
-  <link rel="stylesheet" href="style.css?v=1.21">
+  <link rel="stylesheet" href="touchui.css?v=1.22">
+  <link rel="stylesheet" href="style.css?v=1.22">
 </head>
 
 <body>
@@ -186,9 +186,30 @@
             <input id="canBroadcastEnabled" type="checkbox">
           </label>
           <label>
+            CAN output format
+            <select id="canOutputMode">
+              <option value="0">Forbes button frame (8 bytes, each row's CAN byte / bit)</option>
+              <option value="1">VW radio CAN, 0x5C1 (Mk5 / Mk6 Golf: radios, SWC interfaces)</option>
+            </select>
+          </label>
+          <label id="canBroadcastIdRow">
             CAN ID (hex)
             <input id="canBroadcastId" type="text" maxlength="5" placeholder="1E0">
           </label>
+          <label class="toggle-row" id="canVwIgnitionRow" style="display:none">
+            <span>Also send ignition on (0x2C3)</span>
+            <input id="canVwIgnition" type="checkbox">
+          </label>
+          <p class="hint" id="canVwRadioHint" style="display:none">
+            Sends what a PQ VW's wheel puts on the radio's CAN: ID <code>0x5C1</code>,
+            <code>code 00 00 60</code> every 100&nbsp;ms while a button is held, then
+            <code>00 00 00 60</code>. The code is each row's <strong>To car</strong> code &mdash; on a
+            PQ wheel that is already right (Prev <code>03</code>, Next <code>02</code>, Vol+
+            <code>06</code>, Vol&minus; <code>07</code>, Return <code>29</code>, Phone <code>1A</code>,
+            Mic <code>2A</code>). Set the bus speed to <strong>100 kbit/s</strong>. "Ignition on" is
+            only for an interface wired to the controller alone, never to a car's own CAN.
+            From published Mk6 Golf captures; not yet tested with an interface.
+          </p>
           <label>
             CAN bus speed
             <select id="canBitrateKbit">
@@ -846,9 +867,9 @@
     </section>
   </main>
 
-  <script src="touchui.js?v=1.21"></script>
-  <script src="app.js?v=1.21"></script>
-  <script src="ota.js?v=1.21"></script>
+  <script src="touchui.js?v=1.22"></script>
+  <script src="app.js?v=1.22"></script>
+  <script src="ota.js?v=1.22"></script>
 </body>
 
 </html>

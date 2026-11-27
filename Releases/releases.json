@@ -1,11 +1,54 @@
 {
   "product": "MQBSteeringWheelController",
-  "latest": "1.21",
+  "latest": "1.22",
   "latestByBoard": {
-    "esp32": "1.21",
-    "esp32s3": "1.21"
+    "esp32": "1.22",
+    "esp32s3": "1.22"
   },
   "releases": [
+    {
+      "version": "1.22",
+      "channel": "stable",
+      "date": "2026-11-27",
+      "ota": true,
+      "notes": "New CAN output format 'VW radio CAN (0x5C1)': sends the buttons the way a Mk5/Mk6 Golf wheel talks to the radio, for aftermarket radios and steering-wheel-control interfaces (e.g. InCarTec / Aerpro). Set the CAN speed to 100 kbit/s.",
+      "boards": {
+        "esp32": {
+          "firmware": {
+            "path": "V1.22/firmware.bin",
+            "size": 1207024,
+            "sha256": "82126cd084222e6a3120d2a27f0faa4bba606af9c2d288b939c73284285e2e74"
+          },
+          "filesystem": {
+            "path": "V1.22/littlefs.bin",
+            "size": 655360,
+            "sha256": "38cce40a3e7b807a4c5faabf254a778d2e0597c0e58d64a297bcb0137662233e"
+          }
+        },
+        "esp32s3": {
+          "firmware": {
+            "path": "V1.22-S3/firmware.bin",
+            "size": 1185984,
+            "sha256": "f3aafb9ac4a499fc8d41b166bb5417b75999db443e23521e3ec91f6775390e16"
+          },
+          "filesystem": {
+            "path": "V1.22-S3/littlefs.bin",
+            "size": 1048576,
+            "sha256": "e6059bc414f0ad3a8795c46f8d7c2616f582c3285d9eafaab62f585a59140536"
+          }
+        }
+      },
+      "firmware": {
+        "path": "V1.22/firmware.bin",
+        "size": 1207024,
+        "sha256": "82126cd084222e6a3120d2a27f0faa4bba606af9c2d288b939c73284285e2e74"
+      },
+      "filesystem": {
+        "path": "V1.22/littlefs.bin",
+        "size": 655360,
+        "sha256": "38cce40a3e7b807a4c5faabf254a778d2e0597c0e58d64a297bcb0137662233e"
+      }
+    },
     {
       "version": "1.21",
       "channel": "stable",

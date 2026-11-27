@@ -105,6 +105,10 @@ volatile uint8_t  charismaProgram      = 1;
 volatile uint32_t charismaPressMs      = 0;
 
 volatile uint16_t canBitrateKbit = 500;
+volatile uint8_t  canOutputMode  = CAN_MODE_FORBES;
+volatile bool     canVwIgnition  = false;
+volatile uint8_t  vwRadioCode    = 0;
+volatile uint32_t vwRadioUntilMs = 0;
 volatile uint16_t canBroadcastId = canButtonID;
 volatile bool canBroadcastEnabled = true;
 volatile bool paddlesEnabled = false;
@@ -406,6 +410,9 @@ void loadPreferences() {
       canBitrateKbit != 250 && canBitrateKbit != 500) {
     canBitrateKbit = 500;
   }
+  canOutputMode         = preferences.getUChar("canMode",     canOutputMode);
+  if (canOutputMode > CAN_MODE_MAX) canOutputMode = CAN_MODE_FORBES;
+  canVwIgnition         = preferences.getBool("canIgn",       canVwIgnition);
   paddlesEnabled        = preferences.getBool("paddles",      paddlesEnabled);
   useAuxLightSource     = preferences.getBool("auxLight",     useAuxLightSource);
   auxDimDutyPct10       = preferences.getUShort("auxDimDuty",    auxDimDutyPct10);
@@ -473,6 +480,8 @@ void savePreferences() {
   preferences.putBool("canBc",         canBroadcastEnabled);
   preferences.putUShort("canId",       canBroadcastId);
   preferences.putUShort("canKbit",     canBitrateKbit);
+  preferences.putUChar("canMode",      canOutputMode);
+  preferences.putBool("canIgn",        canVwIgnition);
   preferences.putBool("paddles",       paddlesEnabled);
   preferences.putBool("auxLight",      useAuxLightSource);
   preferences.putUShort("auxDimDuty",  auxDimDutyPct10);

@@ -80,6 +80,25 @@ extern volatile uint32_t charismaPressMs;       // millis() of the last press (0
 
 // CAN bus speed in kbit/s (100/125/250/500). Applied at boot only.
 extern volatile uint16_t canBitrateKbit;
+
+// CAN button output format (V1.22). FORBES = the controller's own 8-byte
+// bitmask on canBroadcastId (each row's CAN byte / bit). VW_RADIO = what a
+// PQ VW's (Mk5 / Mk6 Golf) steering wheel puts on the 100 kbit/s
+// infotainment CAN for the radio: ID 0x5C1, 4 bytes "code 00 00 60", repeated
+// while held - code = the row's To car code, which on a PQ wheel is the
+// wheel's own code (Prev 03, Next 02, Vol+ 06, Vol- 07, Return 29, Phone 1A,
+// Mic 2A). Source: github.com/AxesOfEvil/VW_MkVI_Dynaudio (sniffed on a
+// Mk6 GTI), for aftermarket radio interfaces such as the InCarTec INT-066 /
+// Aerpro HRIVW2 (customer James Reynolds, OBD Works: Mk6 wheel in a T5).
+constexpr uint8_t CAN_MODE_FORBES   = 0;
+constexpr uint8_t CAN_MODE_VW_RADIO = 1;
+constexpr uint8_t CAN_MODE_MAX      = CAN_MODE_VW_RADIO;
+constexpr uint32_t VW_RADIO_BUTTON_ID = 0x5C1;
+constexpr uint32_t VW_RADIO_IGNITION_ID = 0x2C3;  // byte 0 bit 0 = ignition on (same source, unconfirmed)
+extern volatile uint8_t canOutputMode;
+extern volatile bool    canVwIgnition;   // VW_RADIO: also send 0x2C3 = 01 (isolated bus only)
+extern volatile uint8_t  vwRadioCode;    // code of the row held now (0 = none)
+extern volatile uint32_t vwRadioUntilMs; // millis() until which it counts as held
 // TX statistics from twaiSendStandardFrame(): queued vs refused by the driver.
 extern volatile uint32_t canTxAccepted;
 extern volatile uint32_t canTxRefused;

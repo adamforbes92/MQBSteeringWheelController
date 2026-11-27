@@ -5,6 +5,26 @@
   ------------------------------------------
   Bump FW_VERSION in defs.h whenever a new entry is added here.
 
+V1.22 - VW radio CAN output (27/11/2026). Customer James Reynolds (OBD Works,
+        email): Mk6 Golf PQ wheel in an early T5, controller -> CAN -> InCarTec
+        INT-066 / Aerpro HRIVW2 -> Pioneer SPH-DA160DAB; buttons read fine but
+        the interface ignored our 8-byte frame. He found the Mk6 GTI
+        infotainment CAN table in github.com/AxesOfEvil/VW_MkVI_Dynaudio:
+        0x5C1 at 100 kbit/s, "code 00 00 60", repeating while held - Vol+ 06,
+        Vol- 07, Next 02, Prev 03, Mic 2A, Phone 1A, Return 29 (the PQ wheel's
+        own codes). canOutputMode (globals, NVS "canMode", /api/setup):
+        CAN_MODE_FORBES (default, unchanged) or CAN_MODE_VW_RADIO.
+        broadcastVwRadioCAN() (CAN.cpp, every 50 ms from debounceOutputTask):
+        0x5C1 "cc 00 00 60" every 100 ms while a row is held (first at once,
+        and at once on a code change), one "00 00 00 60" on release (not in
+        the source: a harmless "no button"); cc = the held row's To car code,
+        set by sendButtonLINFrame() into vwRadioCode / vwRadioUntilMs (250 ms,
+        refreshed every 100 ms poll). Optional canVwIgnition (NVS "canIgn"):
+        0x2C3 = 01 every 100 ms (byte 0 bit 0 = ignition on, from hugovw1976's
+        Golf 6 captures in the same README) for an interface that waits for
+        the car to be on; only on an isolated bus. Web UI: Setup "CAN output
+        format" + "Also send ignition on", CAN ID hidden in VW mode, hint.
+        NOT tested with an interface: repeat rate and release are guesses.
 V1.21 - "To car" byte per button row + web server on core 0 (26/11/2026).
         Mark (A8 D3 + RS6 wheel): paddles do nothing in the car. The Fit
         wizard's own warning said why: the D3 reads them in frame byte 7 (->
